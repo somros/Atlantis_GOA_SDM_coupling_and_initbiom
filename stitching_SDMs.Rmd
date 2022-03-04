@@ -1178,19 +1178,78 @@ So these are all the species for which we had usable SDMs obtained with sdmTMB a
 
 Here we write out the distributions, and we make a table with total biomass as the sum of juvenile and adult biomass in the GOA for age-structured groups.
 
+We also need to fix these so that they add up to 1 exactly.
+
 Ideally should be able to rbind all these lists and then summarise the total biomass etc.
 Write out some plots at this stage too, to examine the S1-S4 distributions.
 ```{r}
 sort(c(names(ak_and_bc_biomass_by_box),
-names(ak_to_bc_biomass_by_box),
-names(ak_to_bc_biomass_by_box_ecopath)))
+       names(ak_to_bc_biomass_by_box),
+       names(ak_to_bc_biomass_by_box_ecopath)))
 
+all_groups <- rbind(rbindlist(ak_and_bc_biomass_by_box),
+              rbindlist(ak_to_bc_biomass_by_box),
+              rbindlist(ak_to_bc_biomass_by_box_ecopath)) %>%
+  arrange(group,stage,box_id)
 
-
-
-
+biomass_init <- all_groups %>%
+  group_by(group) %>%
+  summarise(init_t=sum(biomass_t,na.rm=T))
+write.csv(biomass_init,'../output/biomass_init.csv',row.names = F)
 ```
 
+Is the 1990 biomass for the GOA, expanded to all ages, larger than the original biomass (either from stock assessment or from Ecopath)?
+```{r}
+ak_biomass %>%
+  pivot_longer(cols = !Year, names_to = 'Species', values_to = 'Biomass_t') %>%
+  filter(Year==1990) %>%
+  left_join(key_ak, by = 'Species') %>%
+  group_by(Group) %>%
+  summarise(biomass_original = sum(Biomass_t,na.rm = T)) %>%
+  rbind((biomass_ecopath %>% select(-isFish) %>% set_names(c('Group','biomass_original')))) %>%
+  inner_join(biomass_init, by = c('Group'='group')) %>%
+  ungroup() %>%
+  mutate(diff=init_t-biomass_original) %>% 
+  pull(diff) %>%
+  min() 
+```
 
+Minimal difference for sculpins, king crab, filter feeders, and herring (but we do not use the last from the bottom trawl anyways). What these have in common is a very high (>90% of the total biomass predicted by sdmTMB) density in the deeper slope boxes, and we can trace that back to few data points and mainly on the slope. Small differences from some others. However, all groups have a positive difference.
 
-**TODO: check that all distributions add up to one at all stages or else Atlantis complains**
+This is not news - we have dedicated SDMs for herring, demersal sharks, and soon for king crab. In addition, even groups whose models converged and were OK should probably no be modeled following bottom trawl data. Forage_slope fish occurred in minimal data points in BC, and was not stellar in AK. We have an alternative that bases those on depth. Benthic carnivores are largely polychaetes, and bottom trawl surveys are really not good at getting those. We have code that maps those based on sediment type instead and is probably more sensible. Sponges are also probably not great here, we have results from SDM studies that do a far better job (although that is cover and not biomass). 
+
+All in all, for some of these it may be a better option to just use values from Aydin et al. (2007) expanded to the total model area and use distributions done elsewhere, otherwise there is the risk of underestimating biomass in BC because of biomass in AK being (more or less artificially) concentrated along the slope boxes. 
+
+Write out the S1-S4 values.
+```{r}
+all_groups <- all_groups %>% mutate(groupstage=paste0(group,stage))
+
+all_groupstages <- all_groups %>% pull(groupstage) %>% unique()
+
+make_s1s4 <- function(this_fg_stage){
+  
+  this_group <- substr(this_fg_stage,1,(nchar(this_fg_stage)-1))
+  this_stage <- substr(this_fg_stage, nchar(this_fg_stage), nchar(this_fg_stage))
+  
+  this_s <- all_groups %>% 
+    filter(group==this_group, stage==this_stage) %>%
+    select(box_id,S) 
+  
+  this_diff <- 1-sum(this_s$S,na.rm=T)
+  
+  this_s[which.max(this_s$S),]$S <- this_s[which.max(this_s$S),]$S + this_diff
+  
+  write.csv(this_s,paste0('../output/s1_s4_',this_group,'_',this_stage,'.csv'),row.names = F)
+  
+  # make a figure
+  p <- atlantis_box %>%
+    select(box_id) %>%
+    left_join(this_s,by='box_id') %>%
+    ggplot()+geom_sf(aes(fill=S))+scale_fill_viridis()+theme_bw()
+  ggsave(paste0('../output/s1_s4_',this_group,'_',this_stage,'.png'),p,width=9,height = 5)
+  
+}
+
+lapply(all_groupstages,make_s1s4)
+
+```
