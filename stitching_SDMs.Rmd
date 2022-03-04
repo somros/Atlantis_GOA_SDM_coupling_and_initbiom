@@ -1,0 +1,957 @@
+---
+title: "Stitching Alaska and Canada SDMs"
+author: "Alberto Rovellini"
+date: "2/28/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = FALSE}
+library(tidyverse)
+library(sf)
+library(maps)
+library(mapdata)
+library(rbgm)
+library(viridis)
+library(readxl)
+library(data.table)
+```
+
+```{r}
+select <- dplyr::select
+```
+
+This (rather long) document has two purposes: (1) to calculate the initial biomass estimates for init.nc based on 1990 (or closest) biomass estimates from stock assessments, expanded to account for unassessed age classes and for biomass in British Columbia; and (2) to calculate estimates of biomass per box to obtain values for the spatial distributions S1-S4. 
+
+We drop the bias correction procedure, it introduces too may assumptions (i.e. we correct for a bias that we cannot quantify). Instead, we use AK sdmTMB models to map 1990 biomass estimates from AK stock assessments to AK boxes, and BC sdmTMB models (many of which look very reasonable) to map 1990 biomass from Canadian stock assessments to BC boxes. Then we merge the obtained biomasses per box from the two regions, and obtain S1-S4 that way. Unfortunately there will be very few species for which we have a stock assessment in BC. **Note that wherever we use a stock assessment biomass we have to expand it to account for unassessed age classes based on age of recruits, weight at age, youngest age class assessed, and M, both in AK and BC!**
+
+1. sdmTMB in AK and BC but only AK stock assessment (e.g. many flatfish):
+- Use sdmTMB in AK results to map SAFE biomass to AK boxes by using the proportions of predicted biomass in each AK box (expand this to accound for unassessed age classes)
+- Use equal density at depth assumption to estimate density/CPUE in BC boxes based on density/CPUE in EGOA boxes.
+- Add up the obtained biomass per box in BC to have Total biomass in BC
+- Redistribute the Total BC biomass with the BC sdmTMB model results, i.e. the proportions of predicted biomass per BC box
+- Use the newly obtained biomass per box to get S1-S4 together with the AK biomasses
+
+2. sdmTMB model for AK and stock assessment for AK (do not seem to have many of these)
+- As Case 1 until step 3, then use that as biomass to get S1-S4.
+
+3. sdmTMB models for AK and BC but no stock assessments (e.g. lots of forage fish and invertebrates)
+- As Case 1 except we use biomass estimates from Aydin et al. (2007) multiplied by the area of the AK boxes
+
+4. sdmTMB for AK, no stock assessment
+- Combination of cases 3 and 2 - use Aydin et al. (2007) to get biomass in AK boxes, then equal density at depth to distribute it in BC, and use the resulting biomass in BC to get S1-S4.
+
+This approach uses the following assumptions:
+
+1. Stock assessment models make reliable estimates of biomass in their study areas.
+2. sdmTMB models that satisfy the validation criteria yield realistic spatial distributions of relative densities in the area where the data that informs them was collected (i.e., we do not use them to predict outside the sampling area, we use them more as a smoothing tool).
+3. The biomass estimates per unit space reported in Aydin et al. (2007) are the best estimate we can get on the state of the system in 1990-2000 for species that do not have a stock assessment, and are realistic enough for Atlantis purposes.
+4. Where no data is available to inform spatial distributions and biomass estimates, species have equal density at depth between the Eastern GOA and Northern BC.
+
+**Here I assume that for stocks that are assessed with RE models in the GOA the reported biomass is total biomass, but in retrospect it is far more likely to be spawning biomass. Check this and amend (i.e. use age at maturity and work through the same process as all other species).**
+
+# Read data
+
+We need:
+
+1. sdmTMB outputs from AK
+2. sdmTMB outputs from BC
+3. Validation sheet to see if we have reliable sdmTMB models for both regions or one
+4. Biomass time series from stock assessments from AK
+5. Biomass time series from stock assessments for BC
+6. Table with age of recruits, age of youngest assessed age class, weight at age, M, for all species with a stock assessment
+7. Biomass per unit area from Aydin et al. (2007)
+8. Model geometry
+
+```{r, warning=F}
+# 1. AK sdmTMB
+ak_files <- list.files("../../sdmTMB_stages/output/cpue_tables/",full.names = T)
+ak_dists <- gsub('../../sdmTMB_stages/output/cpue_tables/','',gsub("_AFSC.csv","",ak_files))
+
+# 2. BC sdmTMB
+bc_files <- list.files("../../Canada_stages/outputs/cpue_tables/",full.names = T)
+bc_dists <- gsub('../../Canada_stages/outputs/cpue_tables/','',gsub("_DFO.csv","",bc_files))
+
+# what is the overlap of the spatial distributions between AK and BC?
+# intersect(ak_dists,bc_dists)
+
+# 3. validation sheet
+val <- readxl::read_xlsx("../data/validation_stages.xlsx", "GOA", col_types = c(rep("text",2),rep("numeric",3)))
+
+# 4. biomass time series from AK
+ak_biomass <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',sheet = 1)
+
+# 5. biomass time series from BC
+bc_biomass_ram <- read.csv('../../../StockAssessments/Canada/bc_tb_data.csv') # these are from RAM legacy
+bc_biomass_dfo <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',range='A1:F32',sheet = 2) # these come from DFO report documents
+bc_biomass_dfo <- bc_biomass_dfo %>% 
+  mutate_at(vars(-Year), ~approx(., xout = 1:length(.))[[2]])
+
+# 6. Table with LH params
+biol_prm <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',range='A1:J31', sheet = 3) # sculpins use average of parameters
+
+# 7. Biomass per unit area from Aydin et al. (2007)
+biomass_ecopath <- read.csv('../data/Aydin_2007.csv')
+biomass_ecopath <- biomass_ecopath %>% 
+  mutate(ak_biomass=biomass_Aydin_2007*290798.8) %>% # this is the area of the AK boxes in km2
+  select(name,ak_biomass)
+
+# 8. model geometry
+atlantis_bgm <- read_bgm('../data/GOA_WGS84_V4_final.bgm')
+atlantis_box <- atlantis_bgm %>% box_sf()
+```
+
+Let's start from dropping the SDMs that did not have a satisfactory performance, i.e. that scored 4 or higher in the validation.
+```{r}
+ak_dists <- data.frame('fg_stage'=ak_dists) %>%
+  left_join((val %>% mutate(fg_stage=paste0(Group,Stage))), by='fg_stage') %>%
+  filter(AKFIN<4) %>%
+  pull(fg_stage)
+
+bc_dists <- data.frame('fg_stage'=bc_dists) %>%
+  left_join((val %>% mutate(fg_stage=paste0(Group,Stage))), by='fg_stage') %>%
+  filter(DFO<4) %>%
+  pull(fg_stage)
+```
+
+Discard the files that we are not allowed to use because they did not pass the validation.
+```{r}
+ak_files1 <- list()
+for(i in 1:length(ak_dists)){ak_files1[[i]]<-ak_files[grepl(ak_dists[i],ak_files)]}
+ak_files <- unlist(ak_files1)
+
+bc_files1 <- list()
+for(i in 1:length(bc_dists)){bc_files1[[i]]<-bc_files[grepl(bc_dists[i],bc_files)]}
+bc_files <- unlist(bc_files1)
+```
+
+**The problem with juveniles**
+
+This approach presents an issue. For several groups, we are missing the sdmTMB for the Juveniles in AK. This means that we cannot expand juvenile biomass to BC via either approach (BC stock assessment or biomass expansion by depth), because we do not get to calculate density at depth in AK. Make a list of what these are and use the adult distribution for them instead, then proceed as usual.
+```{r}
+no_ak_sdm <- c('DogfishJ', 'EulachonJ', 'Flatfish_shallowJ', 'Flathead_soleJ', 'Forage_slopeJ', 'Pacific_hakeJ', 'Rockfish_demersal_shelfJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Shallow_demersalJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
+```
+
+# Species with stock assessment
+
+## AK and BC have assessment
+
+### Expanding biomass estimates to unassessed age classes
+
+The first step is to expand the stock assessment biomass estimates to the unassessed age classes (i.e., those younger than the smallest age class in the biomass estimate, which varies between assessments).
+
+Steps, for each species:
+
+1. From M, get the proportion (of 1) of individuals.
+2. Get length at age with $L=Linf*(1-exp(-K*t))$
+3. Get weight at with $W=a*L^b$
+4. Multiply weight at age (only of the assessed age classes, e.g. 2+ or whatever) by each proportion and sum.
+5. Divide total biomass estimate by point 4 to have an estimated number of individuals.
+6. Multiply those by the corresponding proportions at age.
+7. Now you have individuals at the smallest age assessed. Roll it back with mortality to get numbers of unassessed age classes.
+8. Multiply by weight at age and you have biomass for the smaller age classes.
+9. Add that to the biomass estimates.
+10. Now that you have total biomass, split it between juveniles and adults based on age at maturity.
+
+NOTE: we are not using t0 in the VBGF formulation, however we need an age for age 0. This is the recruitment period parameter, or the larval duration. Those are all over the place right now unfortunately - for now simplify them all to 90 days but then fix this.
+
+```{r}
+all_species <- biol_prm %>% pull(Species)
+
+get_unassessed_biomass <- function(this_species,isBC){
+  
+    if(isTRUE(isBC)){
+    this_biom <- bc_biomass_dfo
+  } else {
+    this_biom <- ak_biomass
+  }
+  
+  this_biom <- this_biom %>% select(Year, this_species) %>% drop_na() %>% as.data.frame()
+  
+  #biomass estimate
+  TB <- this_biom[,2]
+  
+  #parameters
+  M <- biol_prm %>% filter(Species==this_species) %>% pull(M)
+  minage <- ifelse(isBC, 
+                   biol_prm %>% filter(Species==this_species) %>% pull(Agemat),
+                   biol_prm %>% filter(Species==this_species) %>% pull(Minage_ak))
+  maxage <- biol_prm %>% filter(Species==this_species) %>% pull(Maxage)
+  matage <- biol_prm %>% filter(Species==this_species) %>% pull(Agemat)
+  recage <- biol_prm %>% filter(Species==this_species) %>% mutate(recage=recage/365) %>% pull(recage)
+  k <- biol_prm %>% filter(Species==this_species) %>% pull(k)
+  Linf <- biol_prm %>% filter(Species==this_species) %>% pull(Linf)
+  a <- biol_prm %>% filter(Species==this_species) %>% pull(a)
+  b <- biol_prm %>% filter(Species==this_species) %>% pull(b)
+  
+  #0. Make a dataframe to fill with properties by age class
+  dat <- data.frame('age'=0:maxage)
+  
+  #1. calculate proportion
+  dat <- dat %>% mutate(propexp = exp(-(age+1)*M),
+                        prop = propexp/sum(propexp)) %>% select(-propexp)
+  #2.VBGF for length at age
+  dat <- dat %>% rowwise %>% mutate(length = ifelse(age==0,
+                                                    Linf*(1-exp(-k*recage)),
+                                                    Linf*(1-exp(-k*age)))) %>% ungroup()
+  #3. weight at age
+  dat <- dat %>% mutate(weight = a*length^b)
+  
+  #4. weight at age by proportion of individuals
+  dat <- dat %>% mutate(propweight = prop*weight)
+  
+  #5. divide TB by the minage+ propweight - remember that TB is in mt and we need to go to g
+  Ntot <- TB*1000000/(dat %>% filter(age>=minage) %>% pull(propweight) %>% sum())
+  
+  if(minage>0){
+    
+    #6. get numbers at smallest assessed age
+    nyear <- nrow(this_biom)
+    num_minage <- Ntot*(dat %>% filter(age==minage) %>% pull(prop))
+    young_nums <- data.frame(matrix(0, nrow = nyear, ncol = minage))
+    
+    #7. start working at year level here - get numbers of smaller age classes based on M and numbers at minage
+    for(i in 1:nyear){
+      for(j in 1:minage){
+        young_nums[i,j] <- num_minage[i+minage-(j-1)]*exp(M*minage-(j-1))
+      }
+    }
+    
+    #8. multiply by weight at age
+    colnames(young_nums) <- 0:(minage-1)
+    young_biomass <- young_nums %>% 
+      mutate(year=this_biom$Year) %>% 
+      pivot_longer(cols = -year, names_to = 'age', values_to = 'nums') %>%
+      mutate(age = as.integer(age)) %>%
+      left_join((dat %>% select(age,weight)), by = 'age') %>%
+      mutate(biom=nums*weight/1000000) %>% #go back to mt
+      group_by(year) %>%
+      summarise(unassessed_biom=sum(biom))
+    
+    #9. sum to original biomass
+    this_biom_all <- data.frame('Year' = this_biom[,1],
+                                'Species' = this_species,
+                                'Biomass_SA' = this_biom[,2],
+                                'TB' = rowSums(cbind(TB,young_biomass)))
+    
+  } else { # for species that are 0+ in the assessment (e.g. PCod and RE species)
+    this_biom_all <- data.frame('Year' = this_biom[,1],
+                                'Species' = this_species,
+                                'Biomass_SA' = this_biom[,2],
+                                'TB' = this_biom[,2])
+  }
+  
+  #10. handle split juveniles and adults
+  
+  if(is.na(matage)){
+    matage<-6 # this is generic for some flatfish missing age at maturity, but change appropriately for another model
+  }
+  
+  biom_at_age <- expand_grid(this_biom$Year,dat$age) %>%
+    set_names(c('Year','age')) %>%
+    left_join((this_biom_all %>% select(Year,TB))) %>%
+    left_join((dat %>% select(age,propweight)),by='age') %>%
+    group_by(Year) %>%
+    mutate(biomass_at_age = TB/(sum(propweight))*propweight) %>%
+    ungroup()
+  
+  # assume that biomass of the age-at-maturity is 50:50 juveniles and adults as those were mostly ages at 50% maturity
+  agemat_biomass <- biom_at_age %>% filter(age==matage) %>% group_by(Year) %>% summarize(Biomass_matage=sum(biomass_at_age)) %>%
+    ungroup()
+  
+  juv_biomass <- biom_at_age %>% 
+    filter(age<matage) %>% 
+    group_by(Year) %>% 
+    summarize(Biomass_juv=sum(biomass_at_age)) %>%
+    left_join(agemat_biomass,by='Year') %>% 
+    transmute(Biomass_juv=Biomass_juv+Biomass_matage/2) %>%
+    ungroup()
+  
+  adult_biomass <- biom_at_age %>% 
+    filter(age>matage) %>% 
+    group_by(Year) %>% 
+    summarize(Biomass_adult=sum(biomass_at_age)) %>%
+    left_join(agemat_biomass,by='Year') %>% 
+    transmute(Biomass_adult=Biomass_adult+Biomass_matage/2) %>%
+    ungroup()
+  
+  this_biom_all <- cbind(this_biom_all,juv_biomass,adult_biomass)
+  
+  # check that things add up
+  meandiff <- this_biom_all %>% mutate(check=TB-(Biomass_juv+Biomass_adult)) %>% pull(check) %>% mean(na.rm=T)
+  tolerance <- 1 # mt
+  if(meandiff>tolerance){
+    error(paste('Mean of the differences between TB and JB+AB is:',meandiff,'mt',sep=' '))
+  } else {
+    print(paste('Mean of the differences between TB and JB+AB is:',meandiff,'mt',sep=' '))
+  }
+  
+  return(this_biom_all)
+  
+}
+
+biom_all_ak <- rbindlist(lapply(all_species, get_unassessed_biomass, F))
+```
+
+This method attempts to track recruitment variance in the unassessed age classes, but it assumes that M is constant for all age classes, including the youngest ones that most likely have higher M than the estimate we use. This method could be improved by using estimates of mortality at younger age. View.
+
+```{r, fig.width=12, fig.height=8}
+biom_all_ak %>%
+  pivot_longer(cols = c(Biomass_SA,TB), names_to = 'Biomass_type', values_to = 'Biom_mt') %>%
+  ggplot()+
+  geom_line(aes(x=Year,y=Biom_mt,color=Biomass_type))+
+  theme_bw()+
+  facet_wrap(~Species, scales = 'free')
+```
+
+Get 1990, which is what we need for init.nc. Change this if you change the start year.
+```{r}
+biom_ak_1990 <- biom_all_ak %>% filter(Year==1990) %>% select(-Biomass_SA)
+```
+
+#### BC
+
+Same process for the biomass estimates from DFO assessments.
+```{r, fig.width=9, fig.height=5}
+biom_dfo_bc <- rbindlist(lapply(intersect(all_species, colnames(bc_biomass_dfo)[-1]), 
+                                get_unassessed_biomass, T))
+
+biom_dfo_bc %>%
+  pivot_longer(cols = c(Biomass_SA,TB), names_to = 'Biomass_type', values_to = 'Biom_mt') %>%
+  ggplot()+
+  geom_line(aes(x=Year,y=Biom_mt,color=Biomass_type))+
+  theme_bw()+
+  facet_wrap(~Species, scales = 'free')
+
+```
+
+We then assume that TB as taken from RAM legacy is already total biomass. We only keep the species we need, and we break it down to juvenile and adult biomass based on age at maturity.
+```{r}
+ram_species <- bc_biomass_ram %>% pull(commonname) %>% unique()
+ram_species <- ram_species[c(2,5,7,8,9)] # drop those species we do not care about here
+bc_biomass_ram1 <- bc_biomass_ram %>% filter(commonname %in% ram_species) # subset to our species
+bc_biomass_ram1 <- bc_biomass_ram1 %>% group_by(tsyear,commonname) %>% summarise(TB=sum(tsvalue)) # add up areas within BC
+
+# change species names so that they are consistent
+bc_biomass_ram1$commonname <- gsub('Pacific ocean perch','POP',bc_biomass_ram1$commonname)
+bc_biomass_ram1$commonname <- gsub('Rock sole','Southern Rock Sole',bc_biomass_ram1$commonname) # "Rock Sole encountered in BC fisheries and research surveys are almost exclusively Southern Rock Sole."
+
+#rewrite the species vector
+ram_species <-  bc_biomass_ram1 %>% pull(commonname) %>% unique()
+
+split_stage_bc <- function(this_species){ #TODO could be made one function with the one above to get unassessed biomass
+  
+  this_biom <- bc_biomass_ram1 %>% filter(commonname==this_species) %>% select(tsyear,commonname,TB) %>% set_names(c('Year','Species','TB'))
+  
+  #biomass estimate
+  TB <- this_biom[,3]
+  
+  #parameters
+  M <- biol_prm %>% filter(Species==this_species) %>% pull(M)
+  maxage <- biol_prm %>% filter(Species==this_species) %>% pull(Maxage)
+  matage <- biol_prm %>% filter(Species==this_species) %>% pull(Agemat)
+  recage <- biol_prm %>% filter(Species==this_species) %>% mutate(recage=recage/365) %>% pull(recage)
+  k <- biol_prm %>% filter(Species==this_species) %>% pull(k)
+  Linf <- biol_prm %>% filter(Species==this_species) %>% pull(Linf)
+  a <- biol_prm %>% filter(Species==this_species) %>% pull(a)
+  b <- biol_prm %>% filter(Species==this_species) %>% pull(b)
+  
+  #0. Make a dataframe to fill with properties by age class
+  dat <- data.frame('age'=0:maxage)
+  
+  #1. calculate proportion
+  dat <- dat %>% mutate(propexp = exp(-(age+1)*M),
+                        prop = propexp/sum(propexp)) %>% select(-propexp)
+  #2.VBGF for length at age
+  dat <- dat %>% rowwise %>% mutate(length = ifelse(age==0,
+                                                    Linf*(1-exp(-k*recage)),
+                                                    Linf*(1-exp(-k*age)))) %>% ungroup()
+  #3. weight at age
+  dat <- dat %>% mutate(weight = a*length^b)
+  
+  #4. weight at age by proportion of individuals
+  dat <- dat %>% mutate(propweight = prop*weight)
+  
+  #5. handle split juveniles and adults
+  if(is.na(matage)){
+    matage<-6 # this is generic for some flatfish missing age at maturity, but change appropriately for another model
+  }
+  
+  biom_at_age <- expand_grid(this_biom$Year,dat$age) %>%
+    set_names(c('Year','age')) %>%
+    left_join(this_biom,by='Year') %>%
+    left_join((dat %>% select(age,propweight)),by='age') %>%
+    group_by(Year) %>%
+    mutate(biomass_at_age = TB/(sum(propweight))*propweight) %>%
+    ungroup()
+  
+  # assume that biomass of the age-at-maturity is 50:50 juveniles and adults as those were mostly ages at 50% maturity
+  agemat_biomass <- biom_at_age %>% filter(age==matage) %>% group_by(Year) %>% summarize(Biomass_matage=sum(biomass_at_age)) %>%
+    ungroup()
+  
+  juv_biomass <- biom_at_age %>% 
+    filter(age<matage) %>% 
+    group_by(Year) %>% 
+    summarize(Biomass_juv=sum(biomass_at_age)) %>%
+    left_join(agemat_biomass,by='Year') %>% 
+    transmute(Biomass_juv=Biomass_juv+Biomass_matage/2) %>%
+    ungroup()
+  
+  adult_biomass <- biom_at_age %>% 
+    filter(age>matage) %>% 
+    group_by(Year) %>% 
+    summarize(Biomass_adult=sum(biomass_at_age)) %>%
+    left_join(agemat_biomass,by='Year') %>% 
+    transmute(Biomass_adult=Biomass_adult+Biomass_matage/2) %>%
+    ungroup()
+  
+  this_biom_all <- cbind(this_biom,juv_biomass,adult_biomass)
+  
+  # check that things add up
+  meandiff <- this_biom_all %>% mutate(check=TB-(Biomass_juv+Biomass_adult)) %>% pull(check) %>% mean(na.rm=T)
+  tolerance <- 1 # mt
+  if(meandiff>tolerance){
+    error(paste('Mean of the differences between TB and JB+AB is:',meandiff,'mt',sep=' '))
+  } else {
+    print(paste('Mean of the differences between TB and JB+AB is:',meandiff,'mt',sep=' '))
+  }
+  
+  return(this_biom_all)
+  
+}
+
+biom_ram_bc <- rbindlist(lapply(ram_species,split_stage_bc))
+```
+
+Merge RAM and DFO biomasses for BC and take 1990.
+```{r}
+biom_bc_1990 <- biom_dfo_bc %>% 
+  select(-Biomass_SA) %>%
+  rbind(biom_ram_bc) %>%
+  filter(Year==1990)
+```
+
+As a reminder, biomasses are in mt.
+
+### Assigning biomass to boxes
+
+#### AK
+
+Take 1990 biomass estimates in Alaska, and spatial distributions in Alaska. Get proportions per box. 
+
+First, map the species from the stock assessment to the appropriate Atlantis functional group. Write a key manually here.
+
+```{r}
+# AK
+key_ak <- data.frame('Species'=c('Pacific cod',
+                              'Alaska plaice',
+                              'ATF',
+                              'Butter sole',
+                              'Dover sole', 
+                              'Dusky rockfish',                   
+                              'English sole',
+                              'Flathead sole',
+                              'Northern Rock Sole',                
+                              'Pollock',
+                              'Rex sole',
+                              'Southern Rock Sole',                
+                              'Starry flounder',
+                              'Yellowfin sole',
+                              'Northern rockfish',                 
+                              'POP',
+                              'Sablefish',  
+                              'Halibut',   
+                              'Giant Grenadier',
+                              'Big skate',  
+                              'Dogfish',   
+                              'Longnose skate',
+                              'Other skate',
+                              'Thornyhead',
+                              'Shortraker rockfish',
+                              'Rougheye and blackspotted rockfish',
+                              'Bigmouth sculpin',
+                              'Great sculpin',
+                              'Plain sculpin',
+                              'Yellow Irish Lord'),
+                  'Group'=c('Cod',
+                            'Flatfish_shallow',
+                            'Arrowtooth_flounder',
+                            'Flatfish_shallow',
+                            'Flatfish_deep',
+                            'Rockfish_pelagic_shelf',
+                            'Flatfish_shallow',
+                            'Flathead_sole',
+                            'Flatfish_shallow',
+                            'Pollock',
+                            'Rex_sole',
+                            'Flatfish_shallow',
+                            'Flatfish_shallow',
+                            'Flatfish_shallow',
+                            'Rockfish_slope',
+                            'Pacific_ocean_perch',
+                            'Sablefish',
+                            'Halibut',
+                            'Deep_demersal',
+                            'Skate_big',
+                            'Dogfish',
+                            'Skate_longnose',
+                            'Skate_other',
+                            'Thornyhead',
+                            'Rockfish_slope',
+                            'Rockfish_slope',
+                            'Sculpins',
+                            'Sculpins',
+                            'Sculpins',
+                            'Sculpins'))
+
+# BC
+key_bc <- data.frame('Species'=c('ATF',
+                                 'Pollock',
+                                 'Halibut',
+                                 'Thornyhead',
+                                 'Rougheye and blackspotted rockfish',
+                                 'POP',
+                                 'English sole',
+                                 'Southern Rock Sole',
+                                 'Pacific cod',
+                                 'Sablefish'),
+                     'Group'=c('Arrowtooth_flounder',
+                               'Pollock',
+                               'Halibut',
+                               'Thornyhead',
+                               'Rockfish_slope',
+                               'Pacific_ocean_perch',
+                               'Flatfish_shallow',
+                               'Flatfish_shallow',
+                               'Cod',
+                               'Sablefish'))
+
+```
+
+Consider only the spatial distributions for the groups that we have assessed species for.
+```{r}
+# AK
+ak_dists_with_assessment <- list()
+for(i in 1:nrow(key_ak)){
+  ak_dists_with_assessment[[i]] <- ak_dists[grepl(key_ak$Group[i], ak_dists)]
+}
+ak_dists_with_assessment <- unique(unlist(ak_dists_with_assessment)) %>% sort()
+
+#BC
+bc_dists_with_assessment <- list()
+for(i in 1:nrow(key_bc)){
+  bc_dists_with_assessment[[i]] <- bc_dists[grepl(key_bc$Group[i], bc_dists)]
+}
+bc_dists_with_assessment <- unique(unlist(bc_dists_with_assessment)) %>% sort()
+```
+
+Now consider the validation effort. Of these two lists we just made, how many models scored a 4 or lower in their areas?
+```{r}
+ak_dists_with_assessment1 <- data.frame('fg_stage'=ak_dists_with_assessment) %>%
+  left_join((val %>% mutate(fg_stage=paste0(Group,Stage))), by='fg_stage') %>%
+  filter(AKFIN<4) %>%
+  pull(fg_stage)
+
+setdiff(ak_dists_with_assessment,ak_dists_with_assessment1) #all the dists with a corresponding stock assessment can be used
+
+bc_dists_with_assessment1 <- data.frame('fg_stage'=bc_dists_with_assessment) %>%
+  left_join((val %>% mutate(fg_stage=paste0(Group,Stage))), by='fg_stage') %>%
+  filter(DFO<4) %>%
+  pull(fg_stage)
+
+setdiff(bc_dists_with_assessment,bc_dists_with_assessment1) #all the dists with a corresponding stock assessment can be used
+```
+
+SDMs look good for all of these. However, species complexes represent an issue for biomass expansion. For example, many more species of Flatfish_shallow are assessed in the GOA than in BC. Same for rockfish - the biomass in AK includes lots of species, including nothern and shortraker, whereas in BC only rougheye and blackspotted are assessed. For this reason, we cannot use the stock assessment estimate for BC to represent the whole complex, because that would be an underestimate (more than it already is - remember that assessments of complexes do not include all species even in AK).
+
+The only species whose biomass we can expand by using the assessment+SDM approach: ATF, cod, POP, pollock, sablefish, thornyhead, and halibut (where halibut uses the IPHC assessment scaled down to BC area based on FISS, not DFO). 
+```{r}
+ak_and_bc_fg <- c('Arrowtooth_flounder','Cod','Halibut','Pollock','Pacific_ocean_perch','Sablefish','Thornyhead')
+stages <- c('A','J')
+ak_and_bc_dists_with_assessment <- expand.grid(ak_and_bc_fg,stages) %>% mutate(fg_sg=paste0(Var1,Var2)) %>% pull(fg_sg)
+```
+
+For everything else we should probably use the AK assessment, expand for young ages (done above), use the density-at-depth approach and redistribute with the BC smdTMB where available. 
+
+Let's be aware that some species are actually more completely assessed/reported/represented in BC, herring to name one.
+
+Read spatial distributions and use the to allocate biomass estimates from stock assessments.
+```{r}
+allocate_biomass <- function(this_groupstage,isBC){
+  
+  print(paste('Doing',this_groupstage,'and BC is',isBC,sep=' '))
+  this_group <- substr(this_groupstage,1,(nchar(this_groupstage)-1))
+  this_stage <- substr(this_groupstage,nchar(this_groupstage),nchar(this_groupstage))
+  
+  if(isTRUE(isBC)){
+    this_species <- key_bc %>% filter(Group==this_group) %>% pull(Species)
+    this_biom_1990 <- biom_bc_1990 %>% 
+      filter(Species %in% this_species) %>% 
+      group_by(Year) %>%
+      summarise(across(TB:Biomass_adult, ~sum(.x,na.rm = T))) %>%
+      pull(ifelse(this_stage=='A',Biomass_adult,Biomass_juv))
+    
+    this_dist <- read.csv(bc_files[grepl(this_groupstage,bc_files)])
+    these_boxes <- 92:max(atlantis_box$box_id)
+  } else {
+    this_species <- key_ak %>% filter(Group==this_group) %>% pull(Species)
+    this_biom_1990 <- biom_ak_1990 %>% 
+      filter(Species %in% this_species) %>% 
+      group_by(Year) %>%
+      summarise(across(TB:Biomass_adult, ~sum(.x,na.rm = T))) %>%
+      pull(ifelse(this_stage=='A',Biomass_adult,Biomass_juv))
+    
+    this_dist <- read.csv(ak_files[grepl(this_groupstage,ak_files)])
+    these_boxes <- 0:91
+  }
+  
+  #fill empty boxes with the CPUE of the closest largest box
+  
+  # add other boxes
+  this_dist1 <- atlantis_box %>%
+    st_set_geometry(NULL) %>%
+    select(box_id,area,botz,boundary) %>%
+    filter(box_id %in% these_boxes) %>%
+    left_join((this_dist %>% select(box_id,all_years_kgkm2)))
+  
+  # what boxes are empty? This includes boundary or island boxes
+  empty_boxes <- this_dist1 %>% filter(is.na(all_years_kgkm2)) %>% pull(box_id) #1,63,86 for AK GOA
+  
+  # make a data frame with non-empty boxes and a point-like geometry
+  neighbors <- atlantis_box %>%
+    filter(box_id %in% these_boxes) %>% 
+    st_set_geometry(NULL) %>%
+    st_as_sf(coords=c('insideX','insideY'), crs=atlantis_bgm$extra$projection) %>%
+    select(box_id, geometry) %>%
+    filter(box_id %in% setdiff(box_id,empty_boxes))
+    
+  # for each box, get nearest, non-empty box
+  nearest_key <- atlantis_box %>%
+    st_set_geometry(NULL) %>%
+    st_as_sf(coords=c('insideX','insideY'), crs=atlantis_bgm$extra$projection) %>%
+    select(box_id, boundary, botz, geometry) %>%
+    rowwise() %>%
+    mutate(nearest_idx = st_nearest_feature(geometry,neighbors$geometry)) %>%
+    mutate(nearest_box = neighbors[nearest_idx,]$box_id) %>%
+    ungroup() %>%
+    filter(box_id %in% empty_boxes, botz<0, boundary==F) %>%
+    st_set_geometry(NULL) %>%
+    select(box_id,nearest_box)
+  
+  # fill each empty box
+  if(nrow(nearest_key)){
+    for(i in 1:nrow(nearest_key)){
+      this_empty <- nearest_key[i,]$box_id
+      this_nearest <- nearest_key[i,]$nearest_box
+      this_dist1[this_dist1$box_id==this_empty,]$all_years_kgkm2 <- this_dist1[this_dist1$box_id==this_nearest,]$all_years_kgkm2
+    }
+  }
+  
+  # calculate biomass per box
+  this_dist1 <- this_dist1 %>%
+    mutate(biomass_t = all_years_kgkm2*area/1000000/1000,
+           prop = biomass_t/sum(biomass_t,na.rm=T),
+           biomass_t_sa = prop*this_biom_1990,
+           group = this_group,
+           stage = this_stage) %>%
+    select(box_id,group,stage,biomass_t_sa)
+  
+  # put a check
+  if(abs(sum(this_dist1$biomass_t_sa,na.rm=T)-this_biom_1990)>1){
+    warning(paste(sum(this_dist1$biomass_t_sa,na.rm=T),'-',this_biom_1990,'=',sum(this_dist1$biomass_t_sa,na.rm=T)-this_biom_1990))
+  }
+  
+  return(this_dist1)
+}
+```
+
+Apply to the seven groups that have a stock assessment in Alaska and one in Canada, separately.
+```{r}
+ak_dists_as <- lapply(ak_and_bc_dists_with_assessment, allocate_biomass, F)
+names(ak_dists_as) <- ak_and_bc_dists_with_assessment
+
+bc_dists_as <- lapply(ak_and_bc_dists_with_assessment, allocate_biomass, T)
+names(bc_dists_as) <- ak_and_bc_dists_with_assessment
+```
+
+Merge them between Alaska and Canada. 
+```{r}
+ak_and_bc_biomass_by_box <- vector(mode='list',length=length(ak_and_bc_dists_with_assessment))
+names(ak_and_bc_biomass_by_box) <- ak_and_bc_dists_with_assessment
+
+for(i in 1:length(ak_and_bc_dists_with_assessment)){
+  this_ak <- ak_dists_as[[which(names(ak_dists_as)==ak_and_bc_dists_with_assessment[i])]]
+  this_bc <- bc_dists_as[[which(names(bc_dists_as)==ak_and_bc_dists_with_assessment[i])]]
+  
+  ak_and_bc_biomass_by_box[[i]] <- rbind(this_ak,this_bc)
+}
+```
+
+This list contains biomass from 1990 stock assessment estimate for the key GOA groundfish species for both AK and BC and for both stages, mapped with the respective SDMs. This makes no assumptions of catchability bias. Transform these to S1-S4.
+```{r}
+for(i in 1:length(ak_and_bc_dists_with_assessment)){
+  ak_and_bc_biomass_by_box[[i]] <- ak_and_bc_biomass_by_box[[i]] %>%
+    mutate(S=biomass_t_sa/sum(biomass_t_sa,na.rm=T))
+  if(abs(sum(ak_and_bc_biomass_by_box[[i]]$S,na.rm=T))>0.000001){
+    warning(paste('Sum of props is larger than buffer_rounding for',
+                  ak_and_bc_biomass_by_box[[i]]$group[1],
+                  ak_and_bc_biomass_by_box[[i]]$stage[1],
+                  sep = ' '))
+    }
+}
+```
+
+# Species with stock assessment in AK but not in BC and species complexes
+
+These are the groups/stages that have a stock assessment in AK but are not the 7 dealt with in the chunk above. Some of these do not have an assessment in BC (like Rex_sole, Flathead_sole, Flatfish_deep, etc.), some of them do but the level of aggregation is too different from AK to map them to one another (e.g., for Flatfish_shallow we have assessments and biomass estimates for 7 or so species in AK but only 2 in BC, and we cannot assume that the remaining species are found in negligible amounts in BC). Some of these are Tier 5 or higher species (e.g. skates and dogfish).
+```{r}
+ak_fg_stage <- setdiff(ak_dists_with_assessment,ak_and_bc_dists_with_assessment)
+```
+
+The plan here is to expand AK biomass to BC by using the assumption of equal density. We take averages of the density (CPUE) in boxes of E GOA by depth of the box, and assign these averages to the BC boxes. Then calculate biomass per box, add it up to total BC biomass, and re-distribute it based on the BC sdmTMB results. Those values are used to get final S1-S4 values. 
+
+How are the SDMs for these looking like? Can we use them for both AK and BC?
+```{r}
+# but how many of these have usable sdmTMB models according to our validation/skill assessment?
+setdiff(ak_fg_stage, 
+        (val %>% mutate(fg_stage=paste0(Group,Stage)) %>%
+  filter(fg_stage %in% ak_fg_stage, AKFIN<4, DFO<4) %>%
+  pull(fg_stage)))
+
+#ak_fg_stage <- ak_fg_stage[!grepl('Deep_demersal', ak_fg_stage)]
+```
+
+Only Deep_demersalA and Deep_demersalJ have no SDM that should be used in BC, the rest is fair game. 
+
+At this point we need to also add the groups in `no_ak_sdm` that have a stock assessment in AK but no SDM. These are mostly juvenile groups whose SDMs did not converge in AK. Some of these have an SDM in BC that could be used, such as DogfishJ, Skate_longnoseJ, Flatfish_shallowJ. Some do not, like Rockfish_pelagic_shelfJ. 
+
+The idea is: use AK adults SDM to map juvenile biomass from AK stock assessment to AK boxes; then, get density as depth, copy it to BC boxes based on depth. If there is a BC SDM, use that to remap it to the actual boxes; if there is no BC SDM, just use the values from the density at depth approach.
+
+If for BC we have an SDM for a species as adult but not as juvenile, we use the adult. If we have no SDM in BC, we expand by depth and keep those biomasses. 
+
+```{r}
+no_ak_sdm_as <- c('DogfishJ', 'Flatfish_shallowJ', 'Flathead_soleJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
+```
+
+```{r}
+
+make_bc_from_ak_assessment <- function(this_fg_stage){
+  
+  print(paste('Doing',this_fg_stage,sep=' '))
+  
+  this_group <- substr(this_fg_stage,1,(nchar(this_fg_stage)-1))
+  this_stage <- substr(this_fg_stage, nchar(this_fg_stage), nchar(this_fg_stage))
+  
+  # prepare switches that make us read different distributions depending on availability
+  this_case_ak <- 0 # SDM for this groupstage in AK - this is the default because we run this function on a list of AK SDMs
+  
+  # do we have an SDM for this in AK?
+  if(this_fg_stage %in% no_ak_sdm_as){
+    this_case_ak <- 1 # no SDM in AK, we will use adults in AK
+  } 
+  
+  # do we have an SDM for this in BC?
+  if(this_fg_stage %in% bc_dists) {
+    this_case_bc <- 0 # SDM for this groupstage in BC
+  } else {
+    if(sum(grepl(this_group,bc_dists))>0) {
+      this_case_bc <- 1 #SDM in BC for this group but different stage
+    } else {
+      this_case_bc <- 2 #no SDM in BC at all - use depth expansion from AK (for example Deep_Demersal)
+    }
+  }
+     
+  # read in dists ak
+  if(this_case_ak==0){
+    this_dist_ak <- read.csv(ak_files[grepl(this_fg_stage,ak_files)])
+  } else {
+    this_dist_ak <- read.csv(ak_files[grepl(this_group,ak_files)]) # from adults if one of missing juvenile groups
+  }
+  
+  # fill in empty boxes
+  # also the predictions from sdmTMB are all on the same grid so we should be able to do this once only instead of at every iteration - for now build in the capacity for a varying prediction grid between species
+  this_dist_ak1 <- atlantis_box %>%
+    st_set_geometry(NULL) %>%
+    select(box_id,area,botz,boundary) %>%
+    filter(box_id < 92) %>%
+    left_join((this_dist_ak %>% select(box_id,all_years_kgkm2)))
+  
+  # what boxes are empty? 
+  empty_boxes <- this_dist_ak1 %>% filter(is.na(all_years_kgkm2), botz<0, boundary==F) %>% pull(box_id) #1,63,86 for AK GOA
+  
+  # make a data frame with non-empty boxes and a point-like geometry
+  neighbors <- atlantis_box %>%
+    filter(box_id < 92, botz<0, boundary==F) %>% 
+    st_set_geometry(NULL) %>%
+    st_as_sf(coords=c('insideX','insideY'), crs=atlantis_bgm$extra$projection) %>%
+    select(box_id, geometry) %>%
+    filter(box_id %in% setdiff(box_id,empty_boxes))
+  
+  # for each box, get nearest, non-empty box
+  nearest_key <- atlantis_box %>%
+    st_set_geometry(NULL) %>%
+    st_as_sf(coords=c('insideX','insideY'), crs=atlantis_bgm$extra$projection) %>%
+    select(box_id, boundary, botz, geometry) %>%
+    rowwise() %>%
+    mutate(nearest_idx = st_nearest_feature(geometry,neighbors$geometry)) %>%
+    mutate(nearest_box = neighbors[nearest_idx,]$box_id) %>%
+    ungroup() %>%
+    filter(box_id %in% empty_boxes, botz<0, boundary==F) %>%
+    st_set_geometry(NULL) %>%
+    select(box_id,nearest_box)
+  
+  # fill each empty box
+  if(nrow(nearest_key)){
+    for(i in 1:nrow(nearest_key)){
+      this_empty <- nearest_key[i,]$box_id
+      this_nearest <- nearest_key[i,]$nearest_box
+      this_dist_ak1[this_dist_ak1$box_id==this_empty,]$all_years_kgkm2 <- this_dist_ak1[this_dist_ak1$box_id==this_nearest,]$all_years_kgkm2
+    }
+  }
+  
+  # read in biomass from AK SA
+  this_species <- key_ak %>% filter(Group==this_group) %>% pull(Species)
+  this_biom_1990 <- biom_ak_1990 %>% 
+    filter(Species %in% this_species) %>% 
+    group_by(Year) %>%
+    summarise(across(TB:Biomass_adult, ~sum(.x,na.rm = T))) %>%
+    pull(ifelse(this_stage=='A',Biomass_adult,Biomass_juv))
+  
+  this_dist_ak1 <- this_dist_ak1 %>% 
+    mutate(biomass_t = all_years_kgkm2*area/1000000/1000,
+           prop = biomass_t/sum(biomass_t,na.rm=T), # get proportions for AK boxes
+           biomass_t_sa = prop*this_biom_1990, # apportion 1990 sa biom based on prop to AK boxes
+           density_kgkm2 = (biomass_t_sa*1000)/(area/1000000),  # get density per box in AK (subtle, this is not actually CPUE predicted by sdmTMB)
+           group = this_group,
+           stage = this_stage) %>%
+    select(box_id,botz,area,group,stage,biomass_t_sa,density_kgkm2)
+  
+  # add deepest depth layer depending on botz
+  dz <- c(0,30,100,200,500,1000,4000)
+  
+  # take average density by depth stratum in EGOA
+  dens_by_depth <- this_dist_ak1 %>%
+    mutate(dz=findInterval(-1*botz,dz)) %>%
+    filter(box_id>70) %>% # these are boxes east of Cape Suckling
+    group_by(dz) %>%
+    summarise(density_by_depthkgkm2 = mean(density_kgkm2,na.rm=T)) %>% # nothing at the shallowest (0-30 m) depth
+    ungroup() 
+  
+  dens_by_depth1 <- dens_by_depth %>%
+    rbind(data.frame('dz'=1,'density_by_depthkgkm2'=dens_by_depth[dens_by_depth$dz==2,]$density_by_depthkgkm2)) # treat shallowest as next shallowest
+  
+  # assign average density based on depth to BC boxes
+  biom_bc_from_ak <- atlantis_box %>%
+    filter(box_id > 91) %>%
+    mutate(dz=findInterval(-1*botz,dz)) %>%
+    st_set_geometry(NULL) %>%
+    left_join(dens_by_depth1, by='dz') %>%
+    rowwise() %>%
+    mutate(density_by_depthkgkm2 = ifelse(isTRUE(boundary),NA,density_by_depthkgkm2),
+           biomass_t = density_by_depthkgkm2*area/1000000/1000,
+           group = this_group,
+           stage = this_stage) %>%
+    select(box_id,botz,area,group,stage,biomass_t,density_by_depthkgkm2) 
+  
+  # expand to BC biomass
+  bc_biom_tot <- sum(biom_bc_from_ak$biomass_t,na.rm=T) # in mt
+  
+  if(this_case_bc==2){ # do case with filling by depth first
+    s1_s4 <- rbind((this_dist_ak1 %>% 
+                      select(box_id,group,stage,biomass_t_sa) %>% 
+                      set_names(c('box_id','group','stage','biomass_t'))), 
+                   (biom_bc_from_ak %>% select(box_id,group,stage,biomass_t))) %>%
+      mutate(S = biomass_t/sum(biomass_t,na.rm=T))
+    
+  } else {
+    if(this_case_bc==0){ # case where we have a dist from BC for this group and stage
+      this_dist_bc <- read.csv(bc_files[grepl(this_fg_stage,bc_files)])
+    } else if (this_case_bc==1) { # case where we have a dist from BC for this group but different stage
+      this_dist_bc <- read.csv(bc_files[grepl(this_group,bc_files)])
+    } else {
+      stop('this_case_bc is not 0, 1, or 2')
+    }
+    
+    this_dist_bc1 <- atlantis_box %>%
+      filter(box_id>91) %>%
+      st_set_geometry(NULL) %>%
+      select(box_id) %>%
+      left_join(this_dist_bc %>% select(box_id,area,boundary,biomass)) %>%
+      mutate(prop = biomass/sum(biomass,na.rm=T),
+             biomass_t = prop*bc_biom_tot,
+             group = this_group,
+             stage = this_stage) %>%
+      select(box_id,group,stage,biomass_t)
+    # apportion BC biomass calc'ed above based on dists BC
+    # now we have biomass per box in BC and AK. Get S1-S4
+    
+    s1_s4 <- rbind((this_dist_ak1 %>% 
+                      select(box_id,group,stage,biomass_t_sa) %>% 
+                      set_names(c('box_id','group','stage','biomass_t'))), 
+                   this_dist_bc1) %>%
+      mutate(S = biomass_t/sum(biomass_t,na.rm=T))
+    
+  }
+  
+  return(s1_s4)
+  # done
+}
+```
+
+Apply the function to all groups that have a stock assessment in Alaska.
+```{r}
+ak_to_bc_biomass_by_box <- lapply(sort(c(ak_fg_stage,no_ak_sdm_as)), make_bc_from_ak_assessment)
+names(ak_to_bc_biomass_by_box) <-sort (c(ak_fg_stage,no_ak_sdm_as))
+```
+
+So these should be all the assessed species. We are left with:
+
+1. Non-assessed species with sdmTMB in AK and not BC (Crab_tannerA)
+2. Non-assessed species with sdmTMB in BC and not AK (Shallow_demersalJ)
+3. Non-assessed species with sdmTMB in AK and BC (EulachonA)
+
+If we have no spatial distributions in AK, we cannot use the spatial approach, so really let's drop case 2. We may be able to go back and re-fit models to aid convergence, but leave it for now. 
+
+So who are the species left for points 1 and 3?
+```{r}
+no_assessment <- setdiff(ak_dists, c(names(ak_and_bc_biomass_by_box), names(ak_to_bc_biomass_by_box)))
+no_assessment
+```
+
+Some are fish, some are invertebrates. All species without stock assessments in AK, plus Rockfish_demersal_shelf, one of the tricky groups in the model. Let's handle all of these except for the rockfish by taking biomass estimates from Aydin et al. (2007). For the fish, we need to break biomass down by stage. We also need to add those instances where we can use a model for an adult for the vertebrates, for example eulachon.
+
+This is essentially identical to the function above except instead of biomass_1990 from a stock assessment it is from Ecopath.
+
+Drop salmon - the model in AK does not look too bad for chinook and coho but it is probably still too dangerous to use (they should not be caught and there are few data points and they are an important species so better keep them simple than introducing false precision here).
+
+```{r}
+biomass_ecopath[biomass_ecopath$name=='Pacific_hake',]$ak_biomass <- 199000 # from Isaac
+biomass_ecopath <- biomass_ecopath %>% drop_na()
+
+make_bc_from_ak_ecopath <- function(this_fg_stage){
+  # if fish, construct dat and get biomass at age, and then biomass by stage
+  # read in AK dists (switch for adult if we do not have juvenile), fill empty boxes
+  # read in biomass from ecopath (either for the stage or for the whole if invert)
+  # allocate to BC based on dist, get depth avg, allocate to BC based on strata
+  # read in BC if we have it (even adult, see switches above)
+  # reallocate tot biom based on BC dists
+  # done
+}
+
+
+
+no_ak_sdm_no_as <- c('EulachonJ','Forage_slopeJ','HerringJ','Pacific_hakeJ','Shallow_demersalJ','Shark_demersalJ')
+
+```
+
+So these are all the species for which we had usable SDMs obtained with sdmTMB and the bottom trawl surveys. Many S1-S4 are done elsewhere (e.g., GOAIERP, NPZ, IPHC, custom approaches), but none of those should present the issue of handling AK and BC SDMs.
+
+# Total biomass and distributions
+
+Here we write out the distributions, and we make a table with total biomass as the sum of juvenile and adult biomass in the GOA for age-structured groups.
+
+
+**TODO: check that all distributions add up to one at all stages or else Atlantis complains**
