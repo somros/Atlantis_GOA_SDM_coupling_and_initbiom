@@ -94,10 +94,12 @@ bc_biomass_dfo <- bc_biomass_dfo %>%
 biol_prm <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',range='A1:J31', sheet = 3) # sculpins use average of parameters
 
 # 7. Biomass per unit area from Aydin et al. (2007)
-biomass_ecopath <- read.csv('../data/Aydin_2007.csv')
+biomass_ecopath <- readxl::read_xlsx('../data/Aydin_2007.xlsx',range='A1:D24',sheet = 1)
 biomass_ecopath <- biomass_ecopath %>% 
   mutate(ak_biomass=biomass_Aydin_2007*290798.8) %>% # this is the area of the AK boxes in km2
-  select(name,ak_biomass)
+  select(name,isFish,ak_biomass)
+
+parameters_ecopath <- readxl::read_xlsx('../data/Aydin_2007.xlsx',range='A1:K8',sheet = 2)
 
 # 8. model geometry
 atlantis_bgm <- read_bgm('../data/GOA_WGS84_V4_final.bgm')
@@ -927,12 +929,103 @@ This is essentially identical to the function above except instead of biomass_19
 
 Drop salmon - the model in AK does not look too bad for chinook and coho but it is probably still too dangerous to use (they should not be caught and there are few data points and they are an important species so better keep them simple than introducing false precision here).
 
+We need the parameters for these too!!
+
 ```{r}
 biomass_ecopath[biomass_ecopath$name=='Pacific_hake',]$ak_biomass <- 199000 # from Isaac
 biomass_ecopath <- biomass_ecopath %>% drop_na()
 
+split_stage_ecopath <- function(this_fg){ #TODO could be made one function with the one above to get unassessed biomass
+  
+  this_fg <- 'EulachonA'
+  this_species <- substr(this_fg,1,(nchar(this_fg)-1))
+  
+  if(this_species %in% parameters_ecopath$name){
+    this_stage <- substr(this_fg,nchar(this_fg),nchar(this_fg))
+  }
+  
+  this_biom <- biomass_ecopath %>% filter(name==this_fg)
+  
+  
+  
+  #biomass estimate
+  TB <- this_biom[,3]
+  
+  #parameters
+  M <- biol_prm %>% filter(Species==this_species) %>% pull(M)
+  maxage <- biol_prm %>% filter(Species==this_species) %>% pull(Maxage)
+  matage <- biol_prm %>% filter(Species==this_species) %>% pull(Agemat)
+  recage <- biol_prm %>% filter(Species==this_species) %>% mutate(recage=recage/365) %>% pull(recage)
+  k <- biol_prm %>% filter(Species==this_species) %>% pull(k)
+  Linf <- biol_prm %>% filter(Species==this_species) %>% pull(Linf)
+  a <- biol_prm %>% filter(Species==this_species) %>% pull(a)
+  b <- biol_prm %>% filter(Species==this_species) %>% pull(b)
+  
+  #0. Make a dataframe to fill with properties by age class
+  dat <- data.frame('age'=0:maxage)
+  
+  #1. calculate proportion
+  dat <- dat %>% mutate(propexp = exp(-(age+1)*M),
+                        prop = propexp/sum(propexp)) %>% select(-propexp)
+  #2.VBGF for length at age
+  dat <- dat %>% rowwise %>% mutate(length = ifelse(age==0,
+                                                    Linf*(1-exp(-k*recage)),
+                                                    Linf*(1-exp(-k*age)))) %>% ungroup()
+  #3. weight at age
+  dat <- dat %>% mutate(weight = a*length^b)
+  
+  #4. weight at age by proportion of individuals
+  dat <- dat %>% mutate(propweight = prop*weight)
+  
+  #5. handle split juveniles and adults
+  if(is.na(matage)){
+    matage<-6 # this is generic for some flatfish missing age at maturity, but change appropriately for another model
+  }
+  
+  biom_at_age <- expand_grid(this_biom$Year,dat$age) %>%
+    set_names(c('Year','age')) %>%
+    left_join(this_biom,by='Year') %>%
+    left_join((dat %>% select(age,propweight)),by='age') %>%
+    group_by(Year) %>%
+    mutate(biomass_at_age = TB/(sum(propweight))*propweight) %>%
+    ungroup()
+  
+  # assume that biomass of the age-at-maturity is 50:50 juveniles and adults as those were mostly ages at 50% maturity
+  agemat_biomass <- biom_at_age %>% filter(age==matage) %>% group_by(Year) %>% summarize(Biomass_matage=sum(biomass_at_age)) %>%
+    ungroup()
+  
+  juv_biomass <- biom_at_age %>% 
+    filter(age<matage) %>% 
+    group_by(Year) %>% 
+    summarize(Biomass_juv=sum(biomass_at_age)) %>%
+    left_join(agemat_biomass,by='Year') %>% 
+    transmute(Biomass_juv=Biomass_juv+Biomass_matage/2) %>%
+    ungroup()
+  
+  adult_biomass <- biom_at_age %>% 
+    filter(age>matage) %>% 
+    group_by(Year) %>% 
+    summarize(Biomass_adult=sum(biomass_at_age)) %>%
+    left_join(agemat_biomass,by='Year') %>% 
+    transmute(Biomass_adult=Biomass_adult+Biomass_matage/2) %>%
+    ungroup()
+  
+  this_biom_all <- cbind(this_biom,juv_biomass,adult_biomass)
+  
+  # check that things add up
+  meandiff <- this_biom_all %>% mutate(check=TB-(Biomass_juv+Biomass_adult)) %>% pull(check) %>% mean(na.rm=T)
+  tolerance <- 1 # mt
+  if(meandiff>tolerance){
+    error(paste('Mean of the differences between TB and JB+AB is:',meandiff,'mt',sep=' '))
+  } else {
+    print(paste('Mean of the differences between TB and JB+AB is:',meandiff,'mt',sep=' '))
+  }
+  
+  return(this_biom_all)
+  
+}
+
 make_bc_from_ak_ecopath <- function(this_fg_stage){
-  # if fish, construct dat and get biomass at age, and then biomass by stage
   # read in AK dists (switch for adult if we do not have juvenile), fill empty boxes
   # read in biomass from ecopath (either for the stage or for the whole if invert)
   # allocate to BC based on dist, get depth avg, allocate to BC based on strata
