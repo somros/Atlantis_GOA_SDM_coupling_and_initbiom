@@ -78,21 +78,21 @@ We need:
 
 ```{r, warning=F}
 # 1. AK sdmTMB
-ak_files <- list.files("../../sdmTMB_stages/output/cpue_tables/",full.names = T)
-ak_dists <- gsub('../../sdmTMB_stages/output/cpue_tables/','',gsub("_AFSC.csv","",ak_files))
+ak_files <- list.files("../../sdmTMB_Alaska_stages/output/cpue_tables/",full.names = T)
+ak_dists <- gsub('../../sdmTMB_Alaska_stages/output/cpue_tables/','',gsub("_AFSC.csv","",ak_files))
 
 # 2. BC sdmTMB
-bc_files <- list.files("../../Canada_stages/outputs/cpue_tables/",full.names = T)
-bc_dists <- gsub('../../Canada_stages/outputs/cpue_tables/','',gsub("_DFO.csv","",bc_files))
+bc_files <- list.files("../../sdmTMB_Canada_stages/output/cpue_tables/",full.names = T)
+bc_dists <- gsub('../../sdmTMB_Canada_stages/output/cpue_tables/','',gsub("_DFO.csv","",bc_files))
 
 # what is the overlap of the spatial distributions between AK and BC?
 # intersect(ak_dists,bc_dists)
 
 # 3. validation sheet
-val <- readxl::read_xlsx("../data/validation_stages.xlsx", "GOA", col_types = c(rep("text",2),rep("numeric",3)))
+val <- read_xlsx("../data/validation.xlsx", "GOA", col_types = c(rep("text",2),rep("numeric",2)))
 
 # 4. biomass time series from AK
-ak_biomass <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',sheet = 1)
+ak_biomass <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',sheet = 1,range='A1:AF54')
 
 # 5. biomass time series from BC
 bc_biomass_ram <- read.csv('../../../StockAssessments/Canada/bc_tb_data.csv') # these are from RAM legacy
@@ -101,7 +101,7 @@ bc_biomass_dfo <- bc_biomass_dfo %>%
   mutate_at(vars(-Year), ~approx(., xout = 1:length(.))[[2]])
 
 # 6. Table with LH params
-biol_prm <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',range='A1:J31', sheet = 3) # sculpins use average of parameters
+biol_prm <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',range='A1:J32', sheet = 3) # sculpins and rockfish demersal shelf use average of parameters
 
 # 7. Biomass per unit area from Aydin et al. (2007)
 biomass_ecopath <- readxl::read_xlsx('../data/Aydin_2007.xlsx',range='A1:D24',sheet = 1)
@@ -117,15 +117,16 @@ atlantis_box <- atlantis_bgm %>% box_sf()
 ```
 
 Let's start from dropping the SDMs that did not have a satisfactory performance, i.e. that scored 4 or higher in the validation.
+One exception: adult hake scored low (not enough data points), but for now we keep it in (set to 3 in validation table) because we have nothing better and because the model in BC is OK.
 ```{r}
 ak_dists <- data.frame('fg_stage'=ak_dists) %>%
   left_join((val %>% mutate(fg_stage=paste0(Group,Stage))), by='fg_stage') %>%
-  filter(AKFIN<4) %>%
+  filter(Alaska<4) %>%
   pull(fg_stage)
 
 bc_dists <- data.frame('fg_stage'=bc_dists) %>%
   left_join((val %>% mutate(fg_stage=paste0(Group,Stage))), by='fg_stage') %>%
-  filter(DFO<4) %>%
+  filter(Canada<4) %>%
   pull(fg_stage)
 ```
 
@@ -144,7 +145,7 @@ bc_files <- unlist(bc_files1)
 
 This approach presents an issue. For several groups, we are missing the sdmTMB for the Juveniles in AK. This means that we cannot expand juvenile biomass to BC via either approach (BC stock assessment or biomass expansion by depth), because we do not get to calculate density at depth in AK. Make a list of what these are and use the adult distribution for them instead, then proceed as usual.
 ```{r}
-no_ak_sdm <- c('DogfishJ', 'EulachonJ', 'Flatfish_shallowJ', 'Flathead_soleJ', 'Forage_slopeJ', 'Pacific_hakeJ', 'Rockfish_demersal_shelfJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Shallow_demersalJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
+no_ak_sdm <- c('CapelinJ', 'DogfishJ', 'EulachonJ', 'Forage_slopeJ', 'HerringJ', 'Pacific_hakeJ', 'Rockfish_demersal_shelfJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Shallow_demersalJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
 ```
 
 # Species with stock assessment
@@ -168,7 +169,7 @@ Steps, for each species:
 9. Add that to the biomass estimates.
 10. Now that you have total biomass, split it between juveniles and adults based on age at maturity.
 
-NOTE: we are not using t0 in the VBGF formulation, however we need an age for age 0. This is the recruitment period parameter, or the larval duration. Those are all over the place right now unfortunately - for now simplify them all to 90 days but then fix this.
+NOTE: we are not using t0 in the VBGF formulation, however we need an age for age 0. This is the recruitment period parameter, or the larval duration. 
 
 ```{r}
 all_species <- biol_prm %>% pull(Species)
@@ -343,7 +344,7 @@ biom_dfo_bc %>%
 We then assume that TB as taken from RAM legacy is already total biomass. We only keep the species we need, and we break it down to juvenile and adult biomass based on age at maturity.
 ```{r}
 ram_species <- bc_biomass_ram %>% pull(commonname) %>% unique()
-ram_species <- ram_species[c(2,5,7,8,9)] # drop those species we do not care about here
+ram_species <- ram_species[c(2,5,7,8,9)] # drop those species for which we do not have an AK assessment
 bc_biomass_ram1 <- bc_biomass_ram %>% filter(commonname %in% ram_species) # subset to our species
 bc_biomass_ram1 <- bc_biomass_ram1 %>% group_by(tsyear,commonname) %>% summarise(TB=sum(tsvalue)) # add up areas within BC
 
@@ -487,7 +488,8 @@ key_ak <- data.frame('Species'=c('Pacific cod',
                               'Bigmouth sculpin',
                               'Great sculpin',
                               'Plain sculpin',
-                              'Yellow Irish Lord'),
+                              'Yellow Irish Lord',
+                              'Demersal shelf rockfish'),
                   'Group'=c('Cod',
                             'Flatfish_shallow',
                             'Arrowtooth_flounder',
@@ -517,7 +519,8 @@ key_ak <- data.frame('Species'=c('Pacific cod',
                             'Sculpins',
                             'Sculpins',
                             'Sculpins',
-                            'Sculpins'))
+                            'Sculpins',
+                            'Rockfish_demersal_shelf'))
 
 # BC
 key_bc <- data.frame('Species'=c('ATF',
@@ -564,20 +567,20 @@ Now consider the validation effort. Of these two lists we just made, how many mo
 ```{r}
 ak_dists_with_assessment1 <- data.frame('fg_stage'=ak_dists_with_assessment) %>%
   left_join((val %>% mutate(fg_stage=paste0(Group,Stage))), by='fg_stage') %>%
-  filter(AKFIN<4) %>%
+  filter(Alaska<4) %>%
   pull(fg_stage)
 
 setdiff(ak_dists_with_assessment,ak_dists_with_assessment1) #all the dists with a corresponding stock assessment can be used
 
 bc_dists_with_assessment1 <- data.frame('fg_stage'=bc_dists_with_assessment) %>%
   left_join((val %>% mutate(fg_stage=paste0(Group,Stage))), by='fg_stage') %>%
-  filter(DFO<4) %>%
+  filter(Canada<4) %>%
   pull(fg_stage)
 
 setdiff(bc_dists_with_assessment,bc_dists_with_assessment1) #all the dists with a corresponding stock assessment can be used
 ```
 
-SDMs look good for all of these. However, species complexes represent an issue for biomass expansion. For example, many more species of Flatfish_shallow are assessed in the GOA than in BC. Same for rockfish - the biomass in AK includes lots of species, including nothern and shortraker, whereas in BC only rougheye and blackspotted are assessed. For this reason, we cannot use the stock assessment estimate for BC to represent the whole complex, because that would be an underestimate (more than it already is - remember that assessments of complexes do not include all species even in AK).
+SDMs look good for all of these. However, species complexes represent an issue for biomass expansion. For example, many more species of `Flatfish_shallow` are assessed in the GOA than in BC. Same for rockfish - the biomass in AK includes lots of species, including nothern and shortraker, whereas in BC only rougheye and blackspotted are assessed. For this reason, we cannot use the stock assessment estimate for BC to represent the whole complex, because that would be an underestimate (more than it already is - remember that assessments of complexes do not include all species even in AK).
 
 The only species whose biomass we can expand by using the assessment+SDM approach: ATF, cod, POP, pollock, sablefish, thornyhead, and halibut (where halibut uses the IPHC assessment scaled down to BC area based on FISS, not DFO). 
 ```{r}
@@ -731,22 +734,20 @@ How are the SDMs for these looking like? Can we use them for both AK and BC?
 # but how many of these have usable sdmTMB models according to our validation/skill assessment?
 setdiff(ak_fg_stage, 
         (val %>% mutate(fg_stage=paste0(Group,Stage)) %>%
-  filter(fg_stage %in% ak_fg_stage, AKFIN<4, DFO<4) %>%
+  filter(fg_stage %in% ak_fg_stage, Alaska<4, Canada<4) %>%
   pull(fg_stage)))
-
-#ak_fg_stage <- ak_fg_stage[!grepl('Deep_demersal', ak_fg_stage)]
 ```
 
-Only Deep_demersalA and Deep_demersalJ have no SDM that should be used in BC, the rest is fair game. 
+`Deep_demersalA`, `Deep_demersalJ`, and `SculpinsJ` have no SDM that should be used in BC, the rest is fair game. 
 
-At this point we need to also add the groups in `no_ak_sdm` that have a stock assessment in AK but no SDM. These are mostly juvenile groups whose SDMs did not converge in AK. Some of these have an SDM in BC that could be used, such as DogfishJ, Skate_longnoseJ, Flatfish_shallowJ. Some do not, like Rockfish_pelagic_shelfJ. 
+At this point we need to also add the groups in `no_ak_sdm` that have a stock assessment in AK but no SDM. These are mostly juvenile groups whose SDMs did not converge in AK. Some of these have an SDM in BC that could be used, such as `DogfishJ` and `Skate_longnoseJ`. Some do not, like `Rockfish_pelagic_shelfJ`. 
 
 The idea is: use AK adults SDM to map juvenile biomass from AK stock assessment to AK boxes; then, get density as depth, copy it to BC boxes based on depth. If there is a BC SDM, use that to remap it to the actual boxes; if there is no BC SDM, just use the values from the density at depth approach.
 
 If for BC we have an SDM for a species as adult but not as juvenile, we use the adult. If we have no SDM in BC, we expand by depth and keep those biomasses. 
 
 ```{r}
-no_ak_sdm_as <- c('DogfishJ', 'Flatfish_shallowJ', 'Flathead_soleJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
+no_ak_sdm_as <- c('DogfishJ', 'Rockfish_demersal_shelfJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
 ```
 
 ```{r}
@@ -926,11 +927,11 @@ So these should be all the assessed species.
 
 We are left with:
 
-1. Non-assessed species with sdmTMB in AK and not BC (Crab_tannerA)
-2. Non-assessed species with sdmTMB in BC and not AK (Shallow_demersalJ)
-3. Non-assessed species with sdmTMB in AK and BC (EulachonA)
+1. Non-assessed species with sdmTMB in AK and not BC (e.g., `Crab_tannerA`)
+2. Non-assessed species with sdmTMB in BC and not AK (e.g., `CoralsA`)
+3. Non-assessed species with sdmTMB in AK and BC (e.g., `EulachonA`, `Epibenthic_carnA`)
 
-If we have no spatial distributions in AK, we cannot use the spatial approach, so really let's drop case 2. We may be able to go back and re-fit models to aid convergence, but leave it for now. 
+If we have no spatial distributions in AK, we cannot use the spatial approach, so really let's drop case 2. We may be able to go back and re-fit specific models to aid convergence, but leave it for now. 
 
 So what are the species left for points 1 and 3?
 ```{r}
@@ -938,17 +939,14 @@ no_assessment <- setdiff(ak_dists, c(names(ak_and_bc_biomass_by_box), names(ak_t
 no_assessment
 ```
 
-Some are fish, some are invertebrates. All species without stock assessments in AK, plus Rockfish_demersal_shelf, one of the tricky groups in the model. Let's handle all of these except for the rockfish by taking biomass estimates from Aydin et al. (2007). For the fish, we need to break biomass down by stage. We also need to add those instances where we can use a model for an adult for the vertebrates, for example eulachon.
+Some are fish, some are invertebrates. All species without stock assessments in AK, plus `Rockfish_demersal_shelf`, one of the tricky groups in the model. Let's handle all of these except for the rockfish by taking biomass estimates from Aydin et al. (2007). For the fish, we need to break biomass down by stage. We also need to add those instances where we can use a model for an adult for the vertebrates, for example `Eulachon`.
 
 This is essentially identical to the function above except instead of biomass_1990 from a stock assessment it is from Ecopath.
-
 ```{r}
 biomass_ecopath[biomass_ecopath$name=='Pacific_hake',]$ak_biomass <- 199000 # from Isaac
 biomass_ecopath <- biomass_ecopath %>% drop_na()
 
 make_bc_from_ak_ecopath <- function(this_fg_stage){ #TODO could be made one function with the one above to get unassessed biomass
-  
-  this_fg_stage <- 'Crab_kingA'
   
   print(paste('Doing',this_fg_stage,sep=' '))
   
@@ -1168,15 +1166,15 @@ make_bc_from_ak_ecopath <- function(this_fg_stage){ #TODO could be made one func
 
 Prepare the list of groups you want to run this on.
 
-**NOTE**: We have dedicated SDMs for herring, demersal sharks, and soon for king crab. In addition, even groups whose models converged and were OK from a validation standpoint (cue should review the validation) should probably not be modeled after bottom trawl data. Forage_slope fish occurred in minimal data points in BC, and was not stellar in AK. We have an alternative that bases those on depth. Infaunal groups like benthic carnivores and deposit feeders live in the sediment, and bottom trawl surveys are really not good at getting those. We have code that maps those based on sediment type instead and is probably more sensible. Sponges are also probably not great here, we have results from SDM studies that do a far better job (although that is cover and not biomass). 
+**NOTE**: We have dedicated SDMs for herring, demersal sharks, and soon for king crab. In addition, even some groups whose models converged and were OK from a validation standpoint should probably not be modeled after bottom trawl data. `Forage_slope` fish occurred in minimal data points in BC, and was not stellar in AK. We have an alternative that bases those on depth. Infaunal groups like benthic carnivores and deposit feeders live in the sediment, and bottom trawl surveys are really not good at getting those. We have code that maps those based on sediment type instead and is probably more sensible. Sponges are also probably not great here, we have results from SDM studies that do a far better job (although that is cover and not biomass). 
 
 ```{r}
 # these have no SDM in AK but we can use the SDM of the adults to start
-no_ak_sdm_no_as <- c('EulachonJ','Forage_slopeJ','Pacific_hakeJ','Shallow_demersalJ','Shark_demersalJ')
+no_ak_sdm_no_as <- c('EulachonJ','Forage_slopeJ','Pacific_hakeJ','Shallow_demersalJ')
 
-# these are those that scored OK in the validation for AK but we do not want to use here because either we are missing a biomass estimate (rockfish demersal shelf) or because they are groups that we are doing from other sources (like salmon and herring)
+# these are those that scored OK in the validation for AK but we do not want to use here because either we are missing a biomass estimate (rockfish demersal shelf) or because they are groups that we are doing from other sources (like salmon, herring, and capelin)
 
-drop_these <- c('Rockfish_demersal_shelfA', 'Salmon_chinookA', 'Salmon_chumJ','HerringA', 'Deposit_feedersA', 'Benthic_carnivoresA')
+drop_these <- c('Salmon_chinookA', 'Salmon_chumJ','HerringA', 'Deposit_feedersA', 'Benthic_carnivoresA', 'CapelinA')
 
 remaining_groups <- sort(setdiff(c(no_assessment, no_ak_sdm_no_as),drop_these))
 ```
@@ -1229,7 +1227,7 @@ ak_biomass %>%
   min() 
 ```
 
-Minimal difference for sculpins, king crab, and filter feeders (but we do not use the last from the bottom trawl anyways). What these have in common is a very high (>90% of the total biomass predicted by sdmTMB) density in the deeper slope boxes, and we can trace that back to few data points and mainly on the slope. Small differences from some others. However, all groups have a positive difference.
+Minimal difference for sculpins, king crab, and filter feeders. What many these have in common is a very high (>90% of the total biomass predicted by sdmTMB) density in the deeper slope boxes, and we can trace that back to few data points and mainly on the slope. Small differences from some others. However, all groups have a positive difference.
 
 All in all, for some of these it may be a better option to just use values from Aydin et al. (2007) expanded to the total model area and use distributions done elsewhere, otherwise there is the risk of underestimating biomass in BC because of biomass in AK being (more or less artificially) concentrated along the slope boxes. 
 
@@ -1254,14 +1252,19 @@ gridExtra::grid.arrange(grobs = nested_tmp$plots, ncol = 2) # for doc
 
 #for saving
 p <- gridExtra::arrangeGrob(grobs = nested_tmp$plots, ncol = 2)
-ggsave('s1_s4_GOA_V2.png',p,width=10,height = 60,limitsize=F)
+ggsave('s1_s4_GOA_V3.png',p,width=10,height = 60,limitsize=F)
 ```
 
 Write out the S1-S4 values.
-```{r, results=FALSE}
+```{r, results=FALSE, message=FALSE}
 all_groups <- all_groups %>% mutate(groupstage=paste0(group,stage))
 
 all_groupstages <- all_groups %>% pull(groupstage) %>% unique()
+
+# add coastline
+coast <- maps::map("worldHires", c("USA","Canada"), plot = FALSE, fill = TRUE)
+coast_sf <- coast %>% st_as_sf() %>% st_transform(crs = atlantis_bgm$extra$projection)
+atlantis_bbox <- atlantis_box %>% st_bbox()
 
 make_s1s4 <- function(this_fg_stage){
   
@@ -1276,17 +1279,25 @@ make_s1s4 <- function(this_fg_stage){
   
   this_s[which.max(this_s$S),]$S <- this_s[which.max(this_s$S),]$S + this_diff
   
-  write.csv(this_s,paste0('../output/s1_s4_',this_group,'_',this_stage,'.csv'),row.names = F)
+  write.csv(this_s,paste0('../output/s/tables/s1_s4_',this_group,'_',this_stage,'.csv'),row.names = F)
   
   # make a figure
   p <- atlantis_box %>%
     select(box_id) %>%
     left_join(this_s,by='box_id') %>%
-    ggplot()+geom_sf(aes(fill=S))+scale_fill_viridis()+theme_bw()
-  ggsave(paste0('../output/s1_s4_',this_group,'_',this_stage,'.png'),p,width=9,height = 5)
+    ggplot()+
+    geom_sf(aes(fill=S))+
+    geom_sf(data=coast_sf, fill='grey')+
+    coord_sf(xlim = c(atlantis_bbox$xmin, atlantis_bbox$xmax), ylim = c(atlantis_bbox$ymin, atlantis_bbox$ymax))+
+    scale_fill_viridis()+
+    theme_bw()+
+    labs(title=paste(this_group,this_stage,sep=' '))
+  
+  ggsave(paste0('../output/s/pics/s1_s4_',this_group,'_',this_stage,'.png'),p,width=9,height = 5)
   
 }
 
 lapply(all_groupstages,make_s1s4)
-
 ```
+
+Examining the output here shows that some groups are problematic. Some notable ones are juvenile pollock and the `Flatfish_shallow` complex. Those will need to be adjusted in post-processing, or they will requre dedicated `sdmTMB` models. 
