@@ -181,9 +181,66 @@ pinnipeds_s <- read.csv('../../Pinnipeds/output/s1_s4.csv') %>%
 pinnipeds_s <- rbind(pinnipeds_s, (pinnipeds_s %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults
 
 # SSL
+ssl_s1 <- read.csv('../../StellerSeaLions/code/ssl_s1_s4.csv') %>%
+  mutate(fg_stg = 'Steller_sea_lion_A', S = 'S1',
+         Fg_S = paste(fg_stg, S, sep = '_')) %>%
+  select(.bx0,Fg_S,prop) %>%
+  rename(box_id = .bx0, Prop = prop)
 
-# get all values from seabirds - summer from coastal and winter from pelagic
+ssl_s1 <- rbind(ssl_s1, (ssl_s1 %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults)
+ssl_s4 <- ssl_s1 %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S4'))
 
+ssl_s2 <- read.csv('../../StellerSeaLions/code/ssl_s2_s3.csv') %>%
+  mutate(fg_stg = 'Steller_sea_lion_A', S = 'S2',
+         Fg_S = paste(fg_stg, S, sep = '_')) %>%
+  select(.bx0,Fg_S,prop) %>%
+  rename(box_id = .bx0, Prop = prop)
+
+ssl_s2 <- rbind(ssl_s2, (ssl_s2 %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults)
+ssl_s3 <- ssl_s2 %>% mutate(Fg_S = str_replace(Fg_S, 'S2', 'S3'))
+
+ssl_s <- rbind(ssl_s1, ssl_s2, ssl_s3, ssl_s4)
+
+# Seabirds ----------------------------------------------------------------
+
+# winter from pelagic distributions
+winter_files <- list.files('../../Birds/outputs/pelagic_winter/s/', full.names = T)
+summer_files <- list.files('../../Birds/outputs/coastal_summer/', full.names = T)
+
+key <- data.frame('old'=c('Diving_fish','Diving_plankton','Surface_fish','Surface_plankton'),
+                  'new'=c('Seabird_dive_fish','Seabird_dive_inverts','Seabird_surface_fish','Seabird_surface_inverts'))
+
+birds_s_1_4 <- rbindlist(lapply(winter_files, function(x){
+  x <- winter_files[1]
+  fg <- str_match(x, '/s/(.*?)_winter')[,2]
+  fg <- key %>% filter(old==fg) %>% pull(new)
+  
+  this <- read.csv(x) %>%
+    mutate(Fg_S = paste(fg, 'A', 'S1', sep='_')) %>%
+    select(.bx0,Fg_S,Prop) %>%
+    rename(box_id = .bx0)
+  
+  this <- rbind(this, (this %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults)
+  this <- rbind(this, (this %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S4'))))
+  this  
+}))
+
+birds_s_2_3 <- rbindlist(lapply(summer_files, function(x){
+  x <- summer_files[1]
+  fg <- str_match(x, 'summer/(.*?)_s2')[,2]
+  fg <- key %>% filter(old==fg) %>% pull(new)
+  
+  this <- read.csv(x) %>%
+    mutate(Fg_S = paste(fg, 'A', 'S2', sep='_')) %>%
+    select(.bx0,Fg_S,Prop) %>%
+    rename(box_id = .bx0)
+  
+  this <- rbind(this, (this %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults)
+  this <- rbind(this, (this %>% mutate(Fg_S = str_replace(Fg_S, 'S2', 'S3'))))
+  this  
+}))
+
+birds_s <- rbind(birds_s_1_4, birds_s_2_3)
 # get all values from NPZ
 
 # make infauna
