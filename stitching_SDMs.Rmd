@@ -32,34 +32,34 @@ select <- dplyr::select
 
 This document has two purposes: (1) to calculate values of initial biomass for `init.nc` based on 1990 (or closest year) biomass estimates from stock assessments or from Aydin et al. (2007), expanded to account for unassessed age classes and for biomass in British Columbia; and (2) to calculate estimates of biomass per box that we then use to calculate the spatial distributions S1-S4. 
 
-This code is based on the sdmTMB models that use RACE-GAP or DFO bottom trawl survey data. It originates as 
+This code is based on the `sdmTMB` models that use RACE-GAP or DFO bottom trawl survey data. 
 
-We drop the bias correction procedure, it introduces too may assumptions (i.e. we correct for a bias that we cannot quantify). Instead, we use AK sdmTMB models to map 1990 biomass estimates from AK stock assessments to AK boxes, and BC sdmTMB models (many of which look very reasonable) to map 1990 biomass from Canadian stock assessments to BC boxes. Then we merge the obtained biomasses per box from the two regions, and obtain S1-S4 that way. Unfortunately there will be very few species for which we have a stock assessment in BC. **Note that wherever we use a stock assessment biomass we have to expand it to account for unassessed age classes based on age of recruits, weight at age, youngest age class assessed, and M, both in AK and BC!**
+We drop the bias correction procedure, it introduces too may assumptions (i.e. we correct for a bias that we cannot quantify). Instead, we use AK `sdmTMB` models to map 1990 biomass estimates from AK stock assessments to AK boxes, and BC `sdmTMB` models (many of which look very reasonable) to map 1990 biomass from Canadian stock assessments to BC boxes. Then we merge the obtained biomasses per box from the two regions, and obtain S1-S4 that way. Unfortunately there will be very few species for which we have a stock assessment in BC. **Note that wherever we use a stock assessment biomass we have to expand it to account for unassessed age classes based on age of recruits, weight at age, youngest age class assessed, and M, both in AK and BC!**
 
-1. sdmTMB in AK and BC but only AK stock assessment (e.g. many flatfish):
-- Use sdmTMB in AK results to map SAFE biomass to AK boxes by using the proportions of predicted biomass in each AK box (expand this to accound for unassessed age classes)
-- Use equal density at depth assumption to estimate density/CPUE in BC boxes based on density/CPUE in EGOA boxes.
-- Add up the obtained biomass per box in BC to have Total biomass in BC
-- Redistribute the Total BC biomass with the BC sdmTMB model results, i.e. the proportions of predicted biomass per BC box
-- Use the newly obtained biomass per box to get S1-S4 together with the AK biomasses
+1. `sdmTMB` in AK and BC but only AK stock assessment (e.g. many flatfish):
+- Use `sdmTMB` in AK results to map SAFE biomass to AK boxes by using the proportions of predicted biomass in each AK box (expand this to account for unassessed age classes).
+- Use equal density at depth assumption to estimate density/CPUE in BC boxes based on density/CPUE in EGOA boxes (east of Cape Suckling).
+- Add up the obtained biomass per box in BC to have Total biomass in BC.
+- Redistribute the Total BC biomass with the BC `sdmTMB` model results, i.e. the proportions of predicted biomass per BC box.
+- Use the newly obtained biomass per box to get S1-S4 together with the AK biomasses.
 
-2. sdmTMB model for AK and stock assessment for AK (do not seem to have many of these)
+2. `sdmTMB` model for AK and stock assessment for AK (do not seem to have many of these)
 - As Case 1 until step 3, then use that as biomass to get S1-S4.
 
-3. sdmTMB models for AK and BC but no stock assessments (e.g. lots of forage fish and invertebrates)
-- As Case 1 except we use biomass estimates from Aydin et al. (2007) multiplied by the area of the AK boxes
+3. `sdmTM`B models for AK and BC but no stock assessments (e.g. lots of forage fish and invertebrates)
+- As Case 1 except we use biomass estimates from Aydin et al. (2007) multiplied by the area of the AK boxes.
 
-4. sdmTMB for AK, no stock assessment
+4. `sdmTMB` for AK, no stock assessment
 - Combination of cases 3 and 2 - use Aydin et al. (2007) to get biomass in AK boxes, then equal density at depth to distribute it in BC, and use the resulting biomass in BC to get S1-S4.
 
 This approach uses the following assumptions:
 
 1. Stock assessment models make reliable estimates of biomass in their study areas.
-2. sdmTMB models that satisfy the validation criteria yield realistic spatial distributions of relative densities in the area where the data that informs them was collected (i.e., we do not use them to predict outside the sampling area, we use them more as a smoothing tool).
-3. The biomass estimates per unit space reported in Aydin et al. (2007) are the best estimate we can get on the state of the system in 1990-2000 for species that do not have a stock assessment, and are realistic enough for Atlantis purposes.
+2. `sdmTMB` models that satisfy the validation criteria yield realistic spatial distributions of relative densities in the area where the data that informs them was collected (i.e., we do not use them to predict outside the sampling area, we use them more as a smoothing tool).
+3. The biomass estimates per unit space reported in Aydin et al. (2007) are (currently) the best estimate we can get on the state of the system in 1990-2000 for species that do not have a stock assessment, and are realistic enough for Atlantis purposes.
 4. Where no data is available to inform spatial distributions and biomass estimates, species have equal density at depth between the Eastern GOA and Northern BC.
 
-**Here I assume that for stocks that are assessed with RE models in the GOA the reported biomass is total biomass, but in retrospect it is far more likely to be spawning biomass. Check this and amend (i.e. use age at maturity and work through the same process as all other species).**
+**Here I assume that for stocks that are assessed with RE models in the GOA the reported biomass is total biomass.**
 
 **Note**: we worked out Halibut from the IPHC data, and we have access to biomass estimates for the whole model domain from IPHC. The only argument in favor of using this approach here is that we still need to expand that to ages <8, and also the FISS data is probably not best for juvenile distributions. Adults are probably represented better in IPHC-derived distributions.
 
@@ -67,9 +67,9 @@ This approach uses the following assumptions:
 
 We need:
 
-1. sdmTMB outputs from AK
-2. sdmTMB outputs from BC
-3. Validation sheet to see if we have reliable sdmTMB models for both regions or one
+1. `sdmTMB` outputs from AK
+2. `sdmTMB` outputs from BC
+3. Validation sheet to see if we have reliable `sdmTMB` models for both regions or one
 4. Biomass time series from stock assessments from AK
 5. Biomass time series from stock assessments for BC
 6. Table with age of recruits, age of youngest assessed age class, weight at age, M, for all species with a stock assessment
@@ -143,9 +143,9 @@ bc_files <- unlist(bc_files1)
 
 **The problem with juveniles**
 
-This approach presents an issue. For several groups, we are missing the sdmTMB for the Juveniles in AK. This means that we cannot expand juvenile biomass to BC via either approach (BC stock assessment or biomass expansion by depth), because we do not get to calculate density at depth in AK. Make a list of what these are and use the adult distribution for them instead, then proceed as usual.
+This approach presents an issue. For several groups, we are missing the `sdmTMB` for the Juveniles in AK. This means that we cannot expand juvenile biomass to BC via either approach (BC stock assessment or biomass expansion by depth), because we do not get to calculate density at depth in AK. Make a list of what these are and use the adult distribution for them instead.
 ```{r}
-no_ak_sdm <- c('CapelinJ', 'DogfishJ', 'EulachonJ', 'Forage_slopeJ', 'HerringJ', 'Pacific_hakeJ', 'Rockfish_demersal_shelfJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Shallow_demersalJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
+no_ak_sdm <- c('CapelinJ', 'DogfishJ', 'EulachonJ', 'Flatfish_shallowJ', 'Forage_slopeJ', 'HerringJ', 'Pacific_hakeJ', 'Rockfish_demersal_shelfJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Shallow_demersalJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
 ```
 
 # Species with stock assessment
@@ -159,9 +159,9 @@ The first step is to expand the stock assessment biomass estimates to the unasse
 Steps, for each species:
 
 1. From M, get the proportion (of 1) of individuals.
-2. Get length at age with $L=Linf*(1-exp(-K*t))$
-3. Get weight at with $W=a*L^b$
-4. Multiply weight at age (only of the assessed age classes, e.g. 2+ or whatever) by each proportion and sum.
+2. Get length at age with $L_t=L_{inf}(1-exp(-kt))$
+3. Get weight at with $W=aL^b$
+4. Multiply weight at age (only of the assessed age classes, e.g. 2+) by each proportion and sum.
 5. Divide total biomass estimate by point 4 to have an estimated number of individuals.
 6. Multiply those by the corresponding proportions at age.
 7. Now you have individuals at the smallest age assessed. Roll it back with mortality to get numbers of unassessed age classes.
@@ -310,7 +310,6 @@ biom_all_ak <- rbindlist(lapply(all_species, get_unassessed_biomass, F))
 ```
 
 This method attempts to track recruitment variance in the unassessed age classes, but it assumes that M is constant for all age classes, including the youngest ones that most likely have higher M than the estimate we use. This method could be improved by using estimates of mortality at younger age. View.
-
 ```{r, fig.width=12, fig.height=8}
 biom_all_ak %>%
   pivot_longer(cols = c(Biomass_SA,TB), names_to = 'Biomass_type', values_to = 'Biom_mt') %>%
@@ -456,7 +455,6 @@ As a reminder, biomasses are in mt.
 Take 1990 biomass estimates in Alaska, and spatial distributions in Alaska. Get proportions per box. 
 
 First, map the species from the stock assessment to the appropriate Atlantis functional group. Write a key manually here.
-
 ```{r}
 # AK
 key_ak <- data.frame('Species'=c('Pacific cod',
@@ -589,7 +587,7 @@ stages <- c('A','J')
 ak_and_bc_dists_with_assessment <- expand.grid(ak_and_bc_fg,stages) %>% mutate(fg_sg=paste0(Var1,Var2)) %>% pull(fg_sg)
 ```
 
-For everything else we should probably use the AK assessment, expand for young ages (done above), use the density-at-depth approach and redistribute with the BC smdTMB where available. 
+For everything else we should probably use the AK assessment, expand for young ages (done above), use the density-at-depth approach and redistribute with the BC `smdTMB` where available. 
 
 Let's be aware that some species are actually more completely assessed/reported/represented in BC, herring to name one.
 
@@ -722,12 +720,12 @@ for(i in 1:length(ak_and_bc_dists_with_assessment)){
 
 ## Species with stock assessment in AK but not in BC and species complexes
 
-These are the groups/stages that have a stock assessment in AK but are not the 7 dealt with in the chunk above. Some of these do not have an assessment in BC (like Rex_sole, Flathead_sole, Flatfish_deep, etc.), some of them do but the level of aggregation is too different from AK to map them to one another (e.g., for Flatfish_shallow we have assessments and biomass estimates for 7 or so species in AK but only 2 in BC, and we cannot assume that the remaining species are found in negligible amounts in BC). Some of these are Tier 5 or higher species (e.g. skates and dogfish).
+These are the groups/stages that have a stock assessment in AK but are not the 7 dealt with in the chunk above. Some of these do not have an assessment in BC (like `Rex_sole`, `Flathead_sole`, `Flatfish_deep`, etc.), some of them do but the level of aggregation is too different from AK to map them to one another (e.g., for `Flatfish_shallow` we have assessments and biomass estimates for 7 or so species in AK but only 2 in BC, and we cannot assume that the remaining species are found in negligible amounts in BC). Some of these are Tier 5 or higher species (e.g. skates and dogfish).
 ```{r}
 ak_fg_stage <- setdiff(ak_dists_with_assessment,ak_and_bc_dists_with_assessment)
 ```
 
-The plan here is to expand AK biomass to BC by using the assumption of equal density. We take averages of the density (CPUE) in boxes of E GOA by depth of the box, and assign these averages to the BC boxes. Then calculate biomass per box, add it up to total BC biomass, and re-distribute it based on the BC sdmTMB results. Those values are used to get final S1-S4 values. 
+The plan here is to expand AK biomass to BC by using the assumption of equal density. We take averages of the density (CPUE) in boxes of E GOA by depth of the box, and assign these averages to the BC boxes. Then calculate biomass per box, add it up to total BC biomass, and re-distribute it based on the BC `sdmTMB` results. Those values are used to get final S1-S4 values. 
 
 How are the SDMs for these looking like? Can we use them for both AK and BC?
 ```{r}
@@ -747,7 +745,7 @@ The idea is: use AK adults SDM to map juvenile biomass from AK stock assessment 
 If for BC we have an SDM for a species as adult but not as juvenile, we use the adult. If we have no SDM in BC, we expand by depth and keep those biomasses. 
 
 ```{r}
-no_ak_sdm_as <- c('DogfishJ', 'Rockfish_demersal_shelfJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
+no_ak_sdm_as <- c('DogfishJ', 'Flatfish_shallowJ', 'Rockfish_demersal_shelfJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
 ```
 
 ```{r}
@@ -1295,9 +1293,29 @@ make_s1s4 <- function(this_fg_stage){
   
   ggsave(paste0('../output/s/pics/s1_s4_',this_group,'_',this_stage,'.png'),p,width=9,height = 5)
   
+  # also make a figure with density for comparisons with EFH and similar
+  p1 <- atlantis_box %>%
+    select(box_id,area) %>%
+    left_join((all_groups %>% 
+                 filter(group==this_group, stage==this_stage) %>%
+                 select(box_id,biomass_t)),
+              by='box_id') %>%
+    mutate(dens=(biomass_t*1000)/(area/1000000)) %>%
+    ggplot()+
+    geom_sf(aes(fill=dens))+
+    geom_sf(data=coast_sf, fill='grey')+
+    coord_sf(xlim = c(atlantis_bbox$xmin, atlantis_bbox$xmax), ylim = c(atlantis_bbox$ymin, atlantis_bbox$ymax))+
+    scale_fill_viridis()+
+    theme_bw()+
+    labs(title=paste(this_group,this_stage,sep=' '), fill='Biomass (kg/km)')
+  
+    ggsave(paste0('../output/dens_pics/dens_',this_group,'_',this_stage,'.png'),p1,width=9,height = 5)
+  
 }
 
 lapply(all_groupstages,make_s1s4)
 ```
 
-Examining the output here shows that some groups are problematic. Some notable ones are juvenile pollock and the `Flatfish_shallow` complex. Those will need to be adjusted in post-processing, or they will requre dedicated `sdmTMB` models. 
+Examining the output here shows that some groups are problematic. Some notable ones are juvenile pollock and the `Flatfish_shallow` complex. Those will need to be adjusted in post-processing, or they will require dedicated `sdmTMB` models. 
+
+*Note*: Kerim pointed out that some forage fish had pretty erratic estimates from the mass-balancing exercise in Ecopath, in part due to fluctuating biomasses in the surveys in the early 1990's. He warned us that some of those biomass estimates may not be reliable, and that instead we may use the Q estimated in Ecopath to adjust the bottom trawl biomass and take an average of those values over a few years, to smooth any excessive fluctuation. This should be easy, for now though I am using the raw values from Ecopath for simplicity (some of those groups will fluctuate a lot in Atlantis regardless, and anything more than Ecopath estimates may not be worth the effort).
