@@ -438,5 +438,5 @@ invert_s <- all_s %>% mutate(Fg = substr(Fg_S,1,(nchar(Fg_S)-5))) %>%
   pivot_wider(names_from = Fg_S, values_from = Prop) %>%
   select(-box_id)
 
-write.csv(invert_s, '../output/for_parameters/verts.csv', row.names = FALSE)
+write.csv(invert_s, '../output/for_parameters/inverts.csv', row.names = FALSE)
 
