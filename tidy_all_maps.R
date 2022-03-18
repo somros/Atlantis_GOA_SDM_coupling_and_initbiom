@@ -99,6 +99,46 @@ tidy_goaierp <- function(x){
 
 goaierp_s <- rbindlist(lapply(goaierp_files, tidy_goaierp))
 
+# approximation: have juvenile herring same as adult herring
+HER_s <- goaierp_s %>% filter(grepl('Herring',Fg_S)) %>% mutate(Fg_S = str_replace(Fg_S,'_A_','_J_'))
+
+# approximation: we drop the adult salmon models here as probably not well captured, resorting to much simpler assumptions
+# Pink, chum, and sockeye from Ruggerone et al. (2016); leave chinook and coho blank, and paste Isaac's dists at the end
+adult_salmon <- c('Salmon_chinook_A','Salmon_coho_A','Salmon_chum_A','Salmon_pink_A','Salmon_sockeye_A')
+idx <- list()
+for(i in 1:length(adult_salmon)){idx[[i]]<-grep(adult_salmon[i],goaierp_s$Fg_S)}
+idx <- unlist(idx)
+
+goaierp_s <- goaierp_s[-idx,]
+
+# chum, pink, sockeye
+SCM_s <- read.csv('../../Salmon/output/chum_s1_s4.csv') %>%
+  mutate(Fg_S = 'Salmon_chum_A_S1') %>%
+  select(.bx0,Fg_S,S) %>% rename(box_id = .bx0, Prop = S)
+SCM_s <- rbind(SCM_s, (SCM_s %>% mutate(Fg_S = str_replace(Fg_S,'S1','S2'))),
+               (SCM_s %>% mutate(Fg_S = str_replace(Fg_S,'S1','S3'))),
+               (SCM_s %>% mutate(Fg_S = str_replace(Fg_S,'S1','S4'))))
+
+SPI_s <- read.csv('../../Salmon/output/pink_s1_s4.csv') %>%
+  mutate(Fg_S = 'Salmon_pink_A_S1') %>%
+  select(.bx0,Fg_S,S) %>% rename(box_id = .bx0, Prop = S)
+SPI_s <- rbind(SPI_s, (SPI_s %>% mutate(Fg_S = str_replace(Fg_S,'S1','S2'))),
+               (SPI_s %>% mutate(Fg_S = str_replace(Fg_S,'S1','S3'))),
+               (SPI_s %>% mutate(Fg_S = str_replace(Fg_S,'S1','S4'))))
+
+SSO_s <- read.csv('../../Salmon/output/sockeye_s1_s4.csv') %>%
+  mutate(Fg_S = 'Salmon_sockeye_A_S1') %>%
+  select(.bx0,Fg_S,S) %>% rename(box_id = .bx0, Prop = S)
+SSO_s <- rbind(SSO_s, (SSO_s %>% mutate(Fg_S = str_replace(Fg_S,'S1','S2'))),
+               (SSO_s %>% mutate(Fg_S = str_replace(Fg_S,'S1','S3'))),
+               (SSO_s %>% mutate(Fg_S = str_replace(Fg_S,'S1','S4'))))
+
+# chinook, coho (use sockeye as template but have all dists to 0)
+SCH_s <- SSO_s %>% mutate(Fg_S = str_replace(Fg_S, 'sockeye', 'chinook'), Prop = 0)
+SCO_s <- SSO_s %>% mutate(Fg_S = str_replace(Fg_S, 'sockeye', 'coho'), Prop = 0)
+
+goaierp_s <- rbind(goaierp_s,HER_s,SCM_s,SPI_s,SSO_s,SCH_s,SCO_s)
+
 # Non-mammal custom maps --------------------------------------------------
 
 # demersal sharks
@@ -170,6 +210,11 @@ whale_s <- rbindlist(lapply(whale_files, function(x){
   this
 }))
 
+# approximation: add resident killer whales as the transient and grey whales as humpback whales
+WHG_s <- whale_s %>% filter(grepl('Whale_humpback', Fg_S)) %>% mutate(Fg_S = str_replace(Fg_S,'humpback','grey'))
+KWR_s <- whale_s %>% filter(grepl('Killer_transient', Fg_S)) %>% mutate(Fg_S = str_replace(Fg_S,'transient','resident'))
+whale_s <- rbind(whale_s, WHG_s, KWR_s)
+
 # pinnipeds
 pinnipeds_s <- read.csv('../../Pinnipeds/output/s1_s4.csv') %>%
   mutate(S2 = S, S3 = S, S4 = S, NameStage = paste(Name,'A',sep='_')) %>%
@@ -210,7 +255,7 @@ winter_files <- list.files('../../Birds/outputs/pelagic_winter/s/', full.names =
 summer_files <- list.files('../../Birds/outputs/coastal_summer/', full.names = T)
 
 key <- data.frame('old'=c('Diving_fish','Diving_plankton','Surface_fish','Surface_plankton'),
-                  'new'=c('Seabird_dive_fish','Seabird_dive_inverts','Seabird_surface_fish','Seabird_surface_inverts'))
+                  'new'=c('Seabird_dive_fish','Seabird_dive_invert','Seabird_surface_fish','Seabird_surface_inverts'))
 
 birds_s_1_4 <- rbindlist(lapply(winter_files, function(x){
   fg <- str_match(x, '/s/(.*?)_winter')[,2]
@@ -247,7 +292,7 @@ birds_s <- rbind(birds_s_1_4, birds_s_2_3)
 plankton_files <- list.files('../../Plankton_and_nutrients/outputs/s1s4/final_for_parameters/',
                              pattern = '.csv', full.names = T)
 
-nuts <- c('Iron','NH3','NO3') # drop the nuts
+nuts <- c('Detritus','Iron','NH3','NO3') # drop the nuts
 t <- list()
 for(i in 1:length(nuts)){t[[i]] <- grep(nuts[i],plankton_files)}
 
@@ -262,6 +307,12 @@ plankton_s <- rbindlist(lapply(plankton_files, function(x){
     select(box_id,Fg_S,Prop)
   this
 }))
+
+# approximate Pteropods and Macrozooplankton from Mesozooplankton
+PTE_s <- plankton_s %>% filter(grepl('Mesozooplankton', Fg_S)) %>% mutate(Fg_S = str_replace(Fg_S, 'Mesozooplankton','Pteropods'))
+ZL_s <- plankton_s %>% filter(grepl('Mesozooplankton', Fg_S)) %>% mutate(Fg_S = str_replace(Fg_S, 'Mesozooplankton','Macrozooplankton'))
+
+plankton_s <- rbind(plankton_s, PTE_s, ZL_s)
 
 # Infauna -----------------------------------------------------------------
 
@@ -292,12 +343,25 @@ infauna_s <- rbindlist(lapply(infauna_fg, function(x){
   this
 }))
 
+
+# Corals from SDMs --------------------------------------------------------
+
+COR_s <- read.csv('../../../Bottom_cover/output/coral_s1_s4.csv') %>%
+  mutate(prop = replace_na(prop,0),
+         Fg_S = 'Corals_A_S1') %>%
+  rename(Prop = prop) %>%
+  select(box_id,Fg_S,Prop)
+COR_s <- rbind(COR_s,
+               (COR_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S2'))),
+               (COR_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S3'))),
+               (COR_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S4'))))
+
 # Heuristics --------------------------------------------------------------
 
 # Macroalgae
 aydin <- 0.87725 #t/km2
 
-macroalgae_s <- atlantis_box %>%
+MA_s <- atlantis_box %>%
   rowwise() %>%
   mutate(density_kgkm2=ifelse(between(botz,-30,-1), aydin*1000, 0)) %>% # kg km-2
   ungroup() %>%
@@ -307,19 +371,72 @@ macroalgae_s <- atlantis_box %>%
   st_set_geometry(NULL) %>%
   select(box_id,Fg_S,Prop)
 
-macroalgae_s <- rbind(macroalgae_s,
-                      (macroalgae_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S2'))),
-                      (macroalgae_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S3'))),
-                      (macroalgae_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S4'))))
+MA_s <- rbind(MA_s,
+              (MA_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S2'))),
+              (MA_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S3'))),
+              (MA_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S4'))))
 
 # Bind all ----------------------------------------------------------------
 
-# expecting 47 vertebrates (94), 31 pools: 125*4=500. we should have a grand total of 500 dists
+# expecting 47 vertebrates (94), 28 pools (not making these for detritus): 122*4=488. we should have a grand total of 488 dists
 # we will be missing adult salmon
 
-test <- rbind(bt_s, goaierp_s, SHD_s, SHP_s, CAP_s, SAN_s, whale_s, pinnipeds_s, ssl_s, birds_s, plankton_s, infauna_s, macroalgae_s)
+all_s <- rbind(bt_s, 
+               goaierp_s, 
+               SHD_s, 
+               SHP_s, 
+               CAP_s, 
+               SAN_s, 
+               whale_s, 
+               pinnipeds_s, 
+               ssl_s, 
+               birds_s, 
+               plankton_s, 
+               infauna_s, 
+               COR_s,
+               MA_s)
 
-test %>% pull(Fg_S) %>% unique() %>% length()
+# check that everyone adds up to 1
+all_s %>% group_by(Fg_S) %>% summarise(check = sum(Prop)) %>% pull(check) # seems all good
 
-# bring them  all together and see what is missing - stages for vertebrates too
+# check what is missing
+vert_fg <- atlantis_fg %>% 
+  filter(GroupType %in% c('FISH','MAMMAL','BIRD','SHARK')) %>%
+  pull(Name)
+
+vert_stage <- vert_fg %>%
+  expand.grid(c('A','J')) %>%
+  mutate(fg_stg = paste(Var1, Var2, sep = '_')) %>%
+  pull(fg_stg)
+
+invert_fg <- paste(setdiff(setdiff(atlantis_fg$Name, 
+                                 (atlantis_fg %>% 
+                                    filter(GroupType %in% c('FISH','MAMMAL','BIRD','SHARK')) %>%
+                                    pull(Name))),
+                         c('Carrion','Detritus_labile','Detritus_refractory','Benthic_bacteria','Pelagic_bacteria')))
+
+invert_stage <- paste(invert_fg, 'A', sep = '_')
+
+# who is missing?
+done <- all_s %>% pull(Fg_S) %>% substr(1,(nchar(.)-3)) %>% unique() 
+setdiff(c(vert_stage, invert_stage), done)
+
+# now split between vertebrate and invertebrates, sort levels as they appear in the group file, pivot wider, and write out
+vert_s <- all_s %>% mutate(Fg = substr(Fg_S,1,(nchar(Fg_S)-5))) %>% 
+  filter(Fg %in% vert_fg) %>%
+  arrange(factor(Fg, levels = vert_fg)) %>%
+  select(-Fg) %>%
+  pivot_wider(names_from = Fg_S, values_from = Prop) %>%
+  select(-box_id)
+
+write.csv(vert_s, '../output/for_parameters/verts.csv', row.names = FALSE)
+
+invert_s <- all_s %>% mutate(Fg = substr(Fg_S,1,(nchar(Fg_S)-5))) %>% 
+  filter(Fg %in% invert_fg) %>%
+  arrange(factor(Fg, levels = invert_fg)) %>%
+  select(-Fg) %>%
+  pivot_wider(names_from = Fg_S, values_from = Prop) %>%
+  select(-box_id)
+
+write.csv(invert_s, '../output/for_parameters/verts.csv', row.names = FALSE)
 
