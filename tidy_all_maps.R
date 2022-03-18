@@ -241,8 +241,30 @@ birds_s_2_3 <- rbindlist(lapply(summer_files, function(x){
 }))
 
 birds_s <- rbind(birds_s_1_4, birds_s_2_3)
-# get all values from NPZ
 
-# make infauna
+# Plankton ----------------------------------------------------------------
+
+plankton_files <- list.files('../../Plankton_and_nutrients/outputs/s1s4/final_for_parameters/',
+                             pattern = '.csv', full.names = T)
+
+nuts <- c('Iron','NH3','NO3') # drop the nuts
+t <- list()
+for(i in 1:length(nuts)){t[[i]] <- grep(nuts[i],plankton_files)}
+
+plankton_files <- setdiff(plankton_files, plankton_files[unlist(t)])
+
+plankton_s <- rbindlist(lapply(plankton_files, function(x){
+  this_fg <- str_match(x, 'parameters/(.*?).csv')[,2]
+  this <- read.csv(x) %>%
+    set_names(c('fg','box_id','S1','S2','S3','S4')) %>%
+    pivot_longer(cols=S1:S4, names_to = 'S', values_to = 'Prop') %>%
+    mutate(Fg_S = paste(fg,'A',S,sep='_')) %>%
+    select(box_id,Fg_S,Prop)
+  this
+}))
+
+# Infauna -----------------------------------------------------------------
+
+# make infauna based on the substratum
 
 # check what is missing
