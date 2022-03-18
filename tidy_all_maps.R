@@ -422,19 +422,23 @@ done <- all_s %>% pull(Fg_S) %>% substr(1,(nchar(.)-3)) %>% unique()
 setdiff(c(vert_stage, invert_stage), done)
 
 # now split between vertebrate and invertebrates, sort levels as they appear in the group file, pivot wider, and write out
-vert_s <- all_s %>% mutate(Fg = substr(Fg_S,1,(nchar(Fg_S)-5))) %>% 
+vert_s <- all_s %>% 
+  mutate(Fg = substr(Fg_S,1,(nchar(Fg_S)-5)),
+         Stage = substr(Fg_S,(nchar(Fg_S)-3),(nchar(Fg_S)-3))) %>% 
   filter(Fg %in% vert_fg) %>%
-  arrange(factor(Fg, levels = vert_fg)) %>%
-  select(-Fg) %>%
+  arrange(factor(Fg, levels = vert_fg), Stage) %>%
+  select(-Fg,-Stage) %>%
   pivot_wider(names_from = Fg_S, values_from = Prop) %>%
   select(-box_id)
 
 write.csv(vert_s, '../output/for_parameters/verts.csv', row.names = FALSE)
 
-invert_s <- all_s %>% mutate(Fg = substr(Fg_S,1,(nchar(Fg_S)-5))) %>% 
+invert_s <- all_s %>% 
+  mutate(Fg = substr(Fg_S,1,(nchar(Fg_S)-5)),
+         Stage = substr(Fg_S,(nchar(Fg_S)-3),(nchar(Fg_S)-3))) %>% 
   filter(Fg %in% invert_fg) %>%
-  arrange(factor(Fg, levels = invert_fg)) %>%
-  select(-Fg) %>%
+  arrange(factor(Fg, levels = invert_fg), Stage) %>%
+  select(-Fg,-Stage) %>%
   pivot_wider(names_from = Fg_S, values_from = Prop) %>%
   select(-box_id)
 
