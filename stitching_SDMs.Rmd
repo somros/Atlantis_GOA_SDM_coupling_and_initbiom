@@ -117,8 +117,15 @@ atlantis_box <- atlantis_bgm %>% box_sf()
 ```
 
 Let's start from dropping the SDMs that did not have a satisfactory performance, i.e. that scored 4 or higher in the validation.
-One exception: adult hake scored low (not enough data points), but for now we keep it in (set to 3 in validation table) because we have nothing better and because the model in BC is OK.
+
+Two exceptions: 
+
+1. Adult hake scored a 4 (not enough data points), but for now we keep it because we have nothing better and because the model in BC is OK. 
+2. King crab did not have enough data points in AK, but the resulting maps are qualitatively aligned with distributions of red king crab from ADFG surveys, and I do not have access to any other spatially-annotated data for this species.
 ```{r}
+val[val$Group=='Crab_king',3]<-3
+val[val$Group=='Pacific_hake' & val$Stage=='A',3]<-3
+
 ak_dists <- data.frame('fg_stage'=ak_dists) %>%
   left_join((val %>% mutate(fg_stage=paste0(Group,Stage))), by='fg_stage') %>%
   filter(Alaska<4) %>%
@@ -1225,7 +1232,7 @@ ak_biomass %>%
   min() 
 ```
 
-Minimal difference for sculpins, king crab, and filter feeders. What many these have in common is a very high (>90% of the total biomass predicted by sdmTMB) density in the deeper slope boxes, and we can trace that back to few data points and mainly on the slope. Small differences from some others. However, all groups have a positive difference.
+Minimal difference for king crab, sculpins, and filter feeders. What many these have in common is a very high (>90% of the total biomass predicted by sdmTMB) density in the deeper slope boxes, and we can trace that back to few data points and mainly on the slope. Small differences from some others. However, all groups have a positive difference.
 
 All in all, for some of these it may be a better option to just use values from Aydin et al. (2007) expanded to the total model area and use distributions done elsewhere, otherwise there is the risk of underestimating biomass in BC because of biomass in AK being (more or less artificially) concentrated along the slope boxes. 
 
