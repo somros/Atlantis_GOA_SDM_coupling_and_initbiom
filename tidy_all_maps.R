@@ -12,6 +12,8 @@ library(data.table)
 library(rbgm)
 library(sf)
 
+select <- dplyr::select
+
 # get all Atlantis groups
 atlantis_fg <- read.csv('../data/GOA_Groups.csv')
 atlantis_bgm <- read_bgm('../data/GOA_WGS84_V4_final.bgm')
@@ -33,7 +35,7 @@ bt_s <- rbindlist(lapply(bt_files, function(x){
     pivot_longer(c(S1:S4), names_to = 'S', values_to = 'Prop') %>%
     mutate(Fg_S = paste(NameStage, S, sep='_')) %>%
     select(box_id, Fg_S, Prop) %>%
-    mutate(Prop = replace_na(Prop,0))
+    mutate(Prop = replace_na(Prop,0)) %>%
     arrange(Fg_S)
   x1
 }))
@@ -100,7 +102,7 @@ goaierp_s <- rbindlist(lapply(goaierp_files, tidy_goaierp))
 # Non-mammal custom maps --------------------------------------------------
 
 # demersal sharks
-SHD <- read.csv('../../Sharks/output/sleep_s1_s4.csv') %>% # demersal (sleeper) shark from IPHC
+SHD_s <- read.csv('../../Sharks/output/sleep_s1_s4.csv') %>% # demersal (sleeper) shark from IPHC
   mutate(S2 = prop, S3 = prop, S4 = prop, NameStage = 'Shark_demersal_A') %>%
   select(.bx0, NameStage, prop, S2:S4) %>%
   rename(S1 = prop, box_id = .bx0) %>%
@@ -109,10 +111,10 @@ SHD <- read.csv('../../Sharks/output/sleep_s1_s4.csv') %>% # demersal (sleeper) 
   select(box_id, Fg_S, Prop) %>%
   arrange(Fg_S)
 
-SHD <- rbind(SHD, (SHD %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults
+SHD_s <- rbind(SHD_s, (SHD_s %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults
 
 # pelagic sharks
-SHP <- cbind(read.csv('../../Sharks/output/salmon_shark_s1.csv'), # pelagic (salmon shark from Weng et al. 2008)
+SHP_s <- cbind(read.csv('../../Sharks/output/salmon_shark_s1.csv'), # pelagic (salmon shark from Weng et al. 2008)
              read.csv('../../Sharks/output/salmon_shark_s2.csv')[,2],
              read.csv('../../Sharks/output/salmon_shark_s3.csv')[,2],
              read.csv('../../Sharks/output/salmon_shark_s4.csv')[,2]) %>%
@@ -123,10 +125,10 @@ SHP <- cbind(read.csv('../../Sharks/output/salmon_shark_s1.csv'), # pelagic (sal
   select(box_id, Fg_S, Prop) %>%
   arrange(Fg_S)
 
-SHP <- rbind(SHP, (SHP %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults
+SHP_s <- rbind(SHP_s, (SHP_s %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults
 
 # capelin
-CAP <- read.csv('../../Capelin/output/capelin_s1_s4.csv') %>% # capelin from McGowan et al. (2020)
+CAP_s <- read.csv('../../Capelin/output/capelin_s1_s4.csv') %>% # capelin from McGowan et al. (2020)
   mutate(S2 = Prop, S3 = Prop, S4 = Prop, NameStage = 'Capelin_A') %>%
   select(.bx0, NameStage, Prop, S2:S4) %>%
   rename(S1 = Prop, box_id = .bx0) %>%
@@ -135,10 +137,10 @@ CAP <- read.csv('../../Capelin/output/capelin_s1_s4.csv') %>% # capelin from McG
   select(box_id, Fg_S, Prop) %>%
   arrange(Fg_S)
 
-CAP <- rbind(CAP, (CAP %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults
+CAP_s <- rbind(CAP_s, (CAP_s %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults
 
 # sandlance
-SAN <- read.csv('../../Sandlance/output/sandlance_s1_s4.csv') %>% # capelin from McGowan et al. (2020)
+SAN_s <- read.csv('../../Sandlance/output/sandlance_s1_s4.csv') %>% # capelin from McGowan et al. (2020)
   mutate(S2 = Prop, S3 = Prop, S4 = Prop, NameStage = 'Sandlance_A') %>%
   select(.bx0, NameStage, Prop, S2:S4) %>%
   rename(S1 = Prop, box_id = .bx0) %>%
@@ -147,7 +149,7 @@ SAN <- read.csv('../../Sandlance/output/sandlance_s1_s4.csv') %>% # capelin from
   select(box_id, Fg_S, Prop) %>%
   arrange(Fg_S)
 
-SAN <- rbind(SAN, (SAN %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults
+SAN_s <- rbind(SAN_s, (SAN_s %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # assuming juveniles are same as adults
 
 # Marine mammals ----------------------------------------------------------
 
@@ -155,7 +157,7 @@ SAN <- rbind(SAN, (SAN %>% mutate(Fg_S = str_replace(Fg_S, '_A_', '_J_')))) # as
 whale_files <- list.files('../../Whales/output/', full.names = T)
 
 whale_s <- rbindlist(lapply(whale_files, function(x){
-  this <- read.csv(fg) %>%
+  this <- read.csv(x) %>%
     mutate(S2 = Prop, S3 = Prop, S4 = Prop, NameStage = paste(Atlantis_group,'A',sep='_')) %>%
     select(.bx0, NameStage, Prop, S2:S4) %>%
     rename(S1 = Prop, box_id = .bx0) %>%
@@ -211,7 +213,6 @@ key <- data.frame('old'=c('Diving_fish','Diving_plankton','Surface_fish','Surfac
                   'new'=c('Seabird_dive_fish','Seabird_dive_inverts','Seabird_surface_fish','Seabird_surface_inverts'))
 
 birds_s_1_4 <- rbindlist(lapply(winter_files, function(x){
-  x <- winter_files[1]
   fg <- str_match(x, '/s/(.*?)_winter')[,2]
   fg <- key %>% filter(old==fg) %>% pull(new)
   
@@ -226,7 +227,6 @@ birds_s_1_4 <- rbindlist(lapply(winter_files, function(x){
 }))
 
 birds_s_2_3 <- rbindlist(lapply(summer_files, function(x){
-  x <- summer_files[1]
   fg <- str_match(x, 'summer/(.*?)_s2')[,2]
   fg <- key %>% filter(old==fg) %>% pull(new)
   
@@ -265,6 +265,61 @@ plankton_s <- rbindlist(lapply(plankton_files, function(x){
 
 # Infauna -----------------------------------------------------------------
 
-# make infauna based on the substratum
+# Make infauna based on the substratum
 
-# check what is missing
+habitats <- read.csv('C:/Users/Alberto Rovellini/Documents/GOA/Bottom_cover/abiotic_habitat.csv', header = TRUE)
+
+habitats_soft <- habitats %>% 
+  filter(atlantis_class != 'Reef') %>%
+  group_by(.bx0,botz,area,boundary) %>%
+  summarise(soft_cover = sum(cover)) %>%
+  ungroup() %>%
+  mutate(soft_area = soft_cover*area,
+         prop = soft_area/sum(soft_area)) # basically proportion of global soft area in each box as proxy for infauna
+
+infauna_fg <- c('Benthic_carnivores','Deposit_feeders','Meiobenthos') # these are all the same
+
+infauna_s <- rbindlist(lapply(infauna_fg, function(x){
+  this <- habitats_soft %>%
+    mutate(Fg_S=paste(x,'A','S1',sep='_')) %>%
+    select(.bx0,Fg_S,prop) %>%
+    rename(box_id=.bx0, Prop=prop)
+  
+  this <- rbind(this,
+                (this %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S2'))),
+                (this %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S3'))),
+                (this %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S4'))))
+  this
+}))
+
+# Heuristics --------------------------------------------------------------
+
+# Macroalgae
+aydin <- 0.87725 #t/km2
+
+macroalgae_s <- atlantis_box %>%
+  rowwise() %>%
+  mutate(density_kgkm2=ifelse(between(botz,-30,-1), aydin*1000, 0)) %>% # kg km-2
+  ungroup() %>%
+  mutate(biomass = density_kgkm2*area*1e-6,
+         Prop = biomass/sum(biomass),
+         Fg_S = 'Macroalgae_A_S1') %>%
+  st_set_geometry(NULL) %>%
+  select(box_id,Fg_S,Prop)
+
+macroalgae_s <- rbind(macroalgae_s,
+                      (macroalgae_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S2'))),
+                      (macroalgae_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S3'))),
+                      (macroalgae_s %>% mutate(Fg_S = str_replace(Fg_S, 'S1', 'S4'))))
+
+# Bind all ----------------------------------------------------------------
+
+# expecting 47 vertebrates (94), 31 pools: 125*4=500. we should have a grand total of 500 dists
+# we will be missing adult salmon
+
+test <- rbind(bt_s, goaierp_s, SHD_s, SHP_s, CAP_s, SAN_s, whale_s, pinnipeds_s, ssl_s, birds_s, plankton_s, infauna_s, macroalgae_s)
+
+test %>% pull(Fg_S) %>% unique() %>% length()
+
+# bring them  all together and see what is missing - stages for vertebrates too
+
