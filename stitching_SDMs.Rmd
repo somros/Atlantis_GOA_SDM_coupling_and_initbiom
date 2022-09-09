@@ -32,6 +32,8 @@ select <- dplyr::select
 
 This document has two purposes: (1) to calculate values of initial biomass for `init.nc` based on 1990 (or closest year) biomass estimates from stock assessments or from Aydin et al. (2007), expanded to account for unassessed age classes and for biomass in British Columbia; and (2) to calculate estimates of biomass per box that we then use to calculate the spatial distributions S1-S4. 
 
+**NOTE**: for species with stock assessments, this code works at species level to do the biomass expansion to unassessed age classes. It means that, even if we use the 10 multi-year age classes for the Atlantis groups, the algebra here is based on life history parameters (including maximum age and age of recruits) of the single species. Maximum age gets rounded to the closest multiple of 10 at a later stage for multi-year age class calculations. 
+
 This code is based on the `sdmTMB` models that use RACE-GAP or DFO bottom trawl survey data. 
 
 We drop the bias correction procedure, it introduces too may assumptions (i.e. we correct for a bias that we cannot quantify). Instead, we use AK `sdmTMB` models to map 1990 biomass estimates from AK stock assessments to AK boxes, and BC `sdmTMB` models (many of which look very reasonable) to map 1990 biomass from Canadian stock assessments to BC boxes. Then we merge the obtained biomasses per box from the two regions, and obtain S1-S4 that way. Unfortunately there will be very few species for which we have a stock assessment in BC. **Note that wherever we use a stock assessment biomass we have to expand it to account for unassessed age classes based on age of recruits, weight at age, youngest age class assessed, and M, both in AK and BC!**
@@ -92,16 +94,16 @@ bc_dists <- gsub('../../sdmTMB_Canada_stages/output/cpue_tables/','',gsub("_DFO.
 val <- read_xlsx("../data/validation.xlsx", "GOA", col_types = c(rep("text",2),rep("numeric",2)))
 
 # 4. biomass time series from AK
-ak_biomass <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',sheet = 1,range='A1:AF54')
+ak_biomass <- read_xlsx('../data/biomass_from_stock_assessment.xlsx',sheet = 1,range='A1:AK52') # remember to update the range if you modified the input table
 
 # 5. biomass time series from BC
 bc_biomass_ram <- read.csv('../../../StockAssessments/Canada/bc_tb_data.csv') # these are from RAM legacy
-bc_biomass_dfo <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',range='A1:F32',sheet = 2) # these come from DFO report documents
+bc_biomass_dfo <- read_xlsx('../data/biomass_from_stock_assessment.xlsx',range='A1:F32',sheet = 2) # these come from DFO report documents
 bc_biomass_dfo <- bc_biomass_dfo %>% 
   mutate_at(vars(-Year), ~approx(., xout = 1:length(.))[[2]])
 
 # 6. Table with LH params
-biol_prm <- read_xlsx('../../../StockAssessments/biomass_from_stock_assessment.xlsx',range='A1:J32', sheet = 3) # sculpins and rockfish demersal shelf use average of parameters
+biol_prm <- read_xlsx('../data/biomass_from_stock_assessment.xlsx',range='A1:J37', sheet = 3) # sculpins use average of parameters for the complex - species-specific parameters missing
 
 # 7. Biomass per unit area from Aydin et al. (2007)
 biomass_ecopath <- readxl::read_xlsx('../data/Aydin_2007.xlsx',range='A1:D24',sheet = 1)
@@ -117,6 +119,8 @@ atlantis_box <- atlantis_bgm %>% box_sf()
 ```
 
 Let's start from dropping the SDMs that did not have a satisfactory performance, i.e. that scored 4 or higher in the validation.
+
+**NOTE**: any significant update to the SDM code may result in different validation scores, so do not forget to revisit that process. This may be the case when we add new years of data, use a different data source, change the models, etc.
 
 Two exceptions: 
 
@@ -150,7 +154,7 @@ bc_files <- unlist(bc_files1)
 
 **The problem with juveniles**
 
-This approach presents an issue. For several groups, we are missing the `sdmTMB` for the Juveniles in AK. This means that we cannot expand juvenile biomass to BC via either approach (BC stock assessment or biomass expansion by depth), because we do not get to calculate density at depth in AK. Make a list of what these are and use the adult distribution for them instead.
+For several groups, we are missing the `sdmTMB` for the Juveniles in AK. This means that we cannot expand juvenile biomass to BC via either approach (BC stock assessment or biomass expansion by depth), because we do not get to calculate density at depth in AK. Make a list of what these are and use the adult distribution for them instead.
 ```{r}
 no_ak_sdm <- c('CapelinJ', 'DogfishJ', 'EulachonJ', 'Flatfish_shallowJ', 'Forage_slopeJ', 'HerringJ', 'Pacific_hakeJ', 'Rockfish_demersal_shelfJ', 'Rockfish_pelagic_shelfJ', 'SculpinsJ', 'Shallow_demersalJ', 'Skate_bigJ', 'Skate_longnoseJ', 'Skate_otherJ')
 ```
@@ -494,7 +498,12 @@ key_ak <- data.frame('Species'=c('Pacific cod',
                               'Great sculpin',
                               'Plain sculpin',
                               'Yellow Irish Lord',
-                              'Demersal shelf rockfish'),
+                              'Harlequin rockfish',
+                              'Redstripe rockfish',
+                              'Sharpchin rockfish',
+                              'Silvergray rockfish',
+                              'Redbanded rockfish',
+                              'Yelloweye rockfish'),
                   'Group'=c('Cod',
                             'Flatfish_shallow',
                             'Arrowtooth_flounder',
@@ -525,6 +534,11 @@ key_ak <- data.frame('Species'=c('Pacific cod',
                             'Sculpins',
                             'Sculpins',
                             'Sculpins',
+                            'Rockfish_slope',
+                            'Rockfish_slope',
+                            'Rockfish_slope',
+                            'Rockfish_slope',
+                            'Rockfish_demersal_shelf',
                             'Rockfish_demersal_shelf'))
 
 # BC
