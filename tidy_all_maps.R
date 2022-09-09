@@ -7,6 +7,10 @@
 # this is also where we check that the S values add up to 1 exactly
 # TODO: move this check to the relevant code for each species
 
+# Update 9/9/2022
+# Eliminating the need to go through the Excel and Google sheet hoops because they mess up the digits 9/10 times
+# Now saving straight from here to the code to make the initial conditions
+
 library(tidyverse)
 library(data.table)
 library(rbgm)
@@ -431,7 +435,18 @@ vert_s <- all_s %>%
   pivot_wider(names_from = Fg_S, values_from = Prop) %>%
   select(-box_id)
 
-write.csv(vert_s, '../output/for_parameters/verts.csv', row.names = FALSE)
+# Adding here the spatial distributions of adult chinook and coho
+
+chinook_coho <- read_xlsx('../data/chinook_coho.xlsx', sheet = 2)
+salmon_dists <- colnames(chinook_coho)
+
+for (i in 1:length(salmon_dists)){
+  vert_s[,which(colnames(vert_s)==salmon_dists[i])] <- chinook_coho[,which(colnames(chinook_coho)==salmon_dists[i])]
+}
+
+#write.csv(vert_s, '../output/for_parameters/verts.csv', row.names = FALSE)
+write.csv(vert_s, 'C:/Users/Alberto Rovellini/Documents/GOA/Parametrization/build_init_prm_10COHORTS/data/seasonal_distribution.csv', row.names = FALSE)
+
 
 invert_s <- all_s %>% 
   mutate(Fg = substr(Fg_S,1,(nchar(Fg_S)-5)),
@@ -442,5 +457,5 @@ invert_s <- all_s %>%
   pivot_wider(names_from = Fg_S, values_from = Prop) %>%
   select(-box_id)
 
-write.csv(invert_s, '../output/for_parameters/inverts.csv', row.names = FALSE)
-
+#write.csv(invert_s, '../output/for_parameters/inverts.csv', row.names = FALSE)
+write.csv(invert_s, 'C:/Users/Alberto Rovellini/Documents/GOA/Parametrization/build_init_prm_10COHORTS/data/seasonal_distribution_inverts.csv', row.names = FALSE)
