@@ -4,8 +4,9 @@ This code performs the following tasks:
 
 1. Calculate values of initial biomass for `init.nc` based on 1990 (or closest year) biomass estimates from stock assessments or from Aydin et al. (2007), expanded to account for unassessed age classes and for biomass in British Columbia.
 2. Calculate estimates of biomass per box that we then use to calculate the spatial distributions S1-S4.
+3. Writes out S1-S4 vectors.
 
-Biomass in British Columbia is take from one of the following, in this order depending on availability:
+Biomass in Alaska is taken from stock assessments or estimates per unit area from Aydin et al. (2007) expanded to the model domain area. Biomass in British Columbia is taken from one of the following, in this order depending on availability:
 - DFO stock assessments 
 - [RAM Legacy Stock Assessment Database](https://www.ramlegacy.org/)
 - Assumption of equal density at depth with SE GOA
