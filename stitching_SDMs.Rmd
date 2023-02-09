@@ -318,6 +318,9 @@ get_unassessed_biomass <- function(this_species,isBC){
 }
 
 biom_all_ak <- rbindlist(lapply(all_species, get_unassessed_biomass, F))
+
+# write out
+write.csv(biom_all_ak, 'biomass_expanded_ak.csv', row.names = F)
 ```
 
 This method attempts to track recruitment variance in the unassessed age classes, but it assumes that M is constant for all age classes, including the youngest ones that most likely have higher M than the estimate we use. This method could be improved by using estimates of mortality at younger age. View.
@@ -455,6 +458,11 @@ biom_bc_1990 <- biom_dfo_bc %>%
   select(-Biomass_SA) %>%
   rbind(biom_ram_bc) %>%
   filter(Year==1990)
+
+# write out full series
+write.csv((biom_dfo_bc %>% 
+  select(-Biomass_SA) %>%
+  rbind(biom_ram_bc)), 'biomass_expanded_bc.csv', row.names = F)
 ```
 
 As a reminder, biomasses are in mt.
